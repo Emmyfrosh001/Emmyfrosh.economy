@@ -44,13 +44,15 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
 // ── storage ─────────────────────────────────────────────────────
-let db = { coupons: {}, users: {}, usersUpdatedAt: 0, adjustments: [], audit: [] };
+let db = { coupons: {}, users: {}, usersUpdatedAt: 0, adjustments: [], audit: [], accounts: {}, balances: {}, signups: {}, logins: {}, market: { shop: [], coins: [], listings: [], updatedAt: 0 }, jobs: [] };
 try {
   const loaded = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
   db = Object.assign(db, loaded);
 } catch {}
-for (const k of ['coupons', 'users']) if (!db[k] || typeof db[k] !== 'object') db[k] = {};
-for (const k of ['adjustments', 'audit']) if (!Array.isArray(db[k])) db[k] = [];
+for (const k of ['coupons', 'users', 'accounts', 'balances', 'signups', 'logins']) if (!db[k] || typeof db[k] !== 'object') db[k] = {};
+if (!db.market || typeof db.market !== 'object') db.market = { shop: [], coins: [], listings: [], updatedAt: 0 };
+for (const k of ['shop', 'coins', 'listings']) if (!Array.isArray(db.market[k])) db.market[k] = [];
+for (const k of ['adjustments', 'audit', 'jobs']) if (!Array.isArray(db[k])) db[k] = [];
 
 function save() {
   const tmp = DB_FILE + '.tmp';
@@ -105,10 +107,15 @@ function hit(name, key, max, windowMs) {
   buckets.set(k, arr);
   return arr.length > max;
 }
+function peek(name, key, max, windowMs) {
+  const now = Date.now();
+  return (buckets.get(name + ':' + key) || []).filter(t => now - t < windowMs).length >= max;
+}
 setInterval(() => {
   const now = Date.now();
   for (const [k, v] of buckets) if (!v.some(t => now - t < 3600000)) buckets.delete(k);
   for (const [k, s] of sessions) if (s.exp < now) sessions.delete(k);
+  for (const [k, s] of usessions) if (s.exp < now) usessions.delete(k);
 }, 120000).unref();
 
 function httpError(status, msg) { const e = new Error(msg); e.status = status; return e; }
@@ -176,18 +183,54 @@ function parseCookies(req) {
   });
   return out;
 }
-function getSession(req) {
-  const raw = parseCookies(req).sid;
+function getSession(req, cookie = 'sid', store = sessions) {
+  const raw = parseCookies(req)[cookie];
   if (!raw) return null;
   const [sid, mac] = raw.split('.');
   if (!sid || !mac || !safeEq(sign(sid), mac)) return null;
-  const s = sessions.get(sid);
-  if (!s || s.exp < Date.now()) { sessions.delete(sid); return null; }
+  const s = store.get(sid);
+  if (!s || s.exp < Date.now()) { store.delete(sid); return null; }
   return { sid, user: s.user };
 }
-function cookieHeader(req, value, maxAge) {
+function cookieHeader(req, value, maxAge, name = 'sid') {
   const secure = FORCE_SECURE_COOKIE || String(req.headers['x-forwarded-proto'] || '') === 'https';
-  return `sid=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
+  return `${name}=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
+}
+
+// ── player accounts (hashes come from the bot — never plain passwords) ──
+const usessions = new Map();   // sid -> { user: <last10 number>, exp }
+const last10 = (s) => String(s || '').replace(/\D/g, '').slice(-10);
+const DUMMY_HASH = 's1$' + '0'.repeat(32) + '$' + '0'.repeat(128);
+function checkPass(hash, pw) {
+  try {
+    const [v, salt, hex] = String(hash || DUMMY_HASH).split('$');
+    if (v !== 's1') return false;
+    const key = crypto.scryptSync(String(pw), salt, 64);
+    const want = Buffer.from(hex, 'hex');
+    return want.length === key.length && crypto.timingSafeEqual(key, want);
+  } catch { return false; }
+}
+const SIGNUP_TTL = 3600000;
+function hashPassAsync(pw) {
+  return new Promise((resolve, reject) => {
+    const salt = crypto.randomBytes(16).toString('hex');
+    crypto.scrypt(String(pw), salt, 64, (err, key) => err ? reject(err) : resolve(`s1$${salt}$${key.toString('hex')}`));
+  });
+}
+function killSessions(number) { for (const [k, v] of usessions) if (v.user === number) usessions.delete(k); }
+const CODE_ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function newVerifyCode() {
+  let c;
+  do { const b = crypto.randomBytes(8); c = ''; for (let i = 0; i < 8; i++) c += CODE_ALPHA[b[i] % 32]; } while (db.signups[c]);
+  return c;
+}
+const JOB_TTL = 180000;
+const OPEN = (a) => a.status === 'pending' || a.status === 'sent';
+function newJob(fields) {
+  const j = Object.assign({ id: crypto.randomBytes(6).toString('hex'), status: 'pending', createdAt: Date.now() }, fields);
+  db.jobs.unshift(j);
+  if (db.jobs.length > 1500) db.jobs.length = 1500;
+  return j;
 }
 
 // ── routing ─────────────────────────────────────────────────────
@@ -205,15 +248,16 @@ async function route(req, res) {
   if (req.method === 'GET' && p === '/healthz') return send(res, 200, { ok: true });
 
   // ─────────── bot → site (needs API key) ───────────
-  const BOT = ['/coupon/create', '/coupon/redeem', '/api/sync', '/api/pending', '/api/ack'];
+  const BOT = ['/coupon/create', '/coupon/redeem', '/api/sync', '/api/market/sync', '/api/verify', '/api/pending', '/api/ack'];
   if (BOT.includes(p)) {
     if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'method' });
-    if (hit('botfail', ip, 20, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
+    // only FAILED key attempts count toward the limit (the bot polls every 10s)
+    if (peek('botfail', ip, 20, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
     if (!safeEq(req.headers['x-api-key'] || '', API_KEY)) {
       hit('botfail', ip, 20, 60000);
       return send(res, 401, { ok: false, error: 'unauthorized' });
     }
-    const body = await readBody(req, p === '/api/sync' ? 6 * 1024 * 1024 : 20000);
+    const body = await readBody(req, (p === '/api/sync' || p === '/api/market/sync') ? 6 * 1024 * 1024 : 20000);
 
     if (p === '/coupon/create') {
       const amount = Math.floor(Number(body.amount));
@@ -259,6 +303,62 @@ async function route(req, res) {
       return send(res, 200, { ok: true, count: Object.keys(users).length });
     }
 
+    if (p === '/api/market/sync') {
+      const str = (v, n) => String(v ?? '').slice(0, n);
+      const int = (v) => { v = Math.floor(Number(v)); return Number.isFinite(v) && v >= 0 ? Math.min(v, 1e15) : 0; };
+      db.market = {
+        shop: (Array.isArray(body.shop) ? body.shop : []).slice(0, 400).map(x => ({ key: str(x.key, 40), name: str(x.name, 60), price: int(x.price), out: !!x.out })),
+        coins: (Array.isArray(body.coins) ? body.coins : []).slice(0, 100).map(x => ({ key: str(x.key, 40), name: str(x.name, 60), price: int(x.price) })),
+        listings: (Array.isArray(body.listings) ? body.listings : []).slice(0, 1500).map(x => ({
+          id: str(x.id, 20), item: str(x.item, 40), name: str(x.name, 60), qty: int(x.qty), price: int(x.price),
+          seller: str(x.seller, 40), kind: ['admin', 'bot', 'player'].includes(x.kind) ? x.kind : 'player',
+          seller_id: str(x.seller_id, 100), closedUntil: int(x.closedUntil), expiresAt: int(x.expiresAt)
+        })),
+        updatedAt: Date.now()
+      };
+      if (Array.isArray(body.accounts)) {
+        const acc = {};
+        for (const a of body.accounts.slice(0, 20000)) {
+          const key = last10(a?.number);
+          if (key.length < 7 || !/^s1\$[0-9a-f]{32}\$[0-9a-f]{128}$/.test(String(a.hash || ''))) continue;
+          acc[key] = { number: key, jid: str(a.jid, 100), hash: a.hash, name: str(a.name || 'Player', 60) };
+        }
+        for (const a of body.accounts.slice(0, 20000)) {
+          const key = last10(a?.number);
+          if (acc[key]) acc[key].banned = !!a.banned;
+        }
+        // admin changes the bot has not applied yet still win for now
+        for (const a of db.jobs.filter(x => OPEN(x) && String(x.type).startsWith('acct_')).reverse()) {
+          const k = Object.keys(acc).find(n => acc[n].jid === a.user);
+          if (!k) continue;
+          if (a.type === 'acct_pass') acc[k].hash = a.hash;
+          else if (a.type === 'acct_ban') acc[k].banned = !!a.banned;
+          else if (a.type === 'acct_del') delete acc[k];
+        }
+        db.accounts = acc;
+        const now2 = Date.now();
+        for (const [c, sgn] of Object.entries(db.signups)) if (acc[sgn.number] || now2 - sgn.createdAt > SIGNUP_TTL) delete db.signups[c];
+      }
+      if (body.balances && typeof body.balances === 'object') {
+        const bal = {};
+        for (const [jid, b] of Object.entries(body.balances).slice(0, 20000))
+          bal[jid.slice(0, 100)] = { balance: int(b?.balance), bank: int(b?.bank), level: Math.max(1, int(b?.level)), name: str(b?.name || 'Player', 60) };
+        db.balances = bal;
+      }
+      save();
+      return send(res, 200, { ok: true, listings: db.market.listings.length, accounts: Object.keys(db.accounts).length });
+    }
+
+    if (p === '/api/verify') {
+      const code = String(body.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const sg = db.signups[code];
+      if (!sg) return send(res, 200, { ok: false, error: 'invalid_code' });
+      if (Date.now() - sg.createdAt > SIGNUP_TTL) { delete db.signups[code]; save(); return send(res, 200, { ok: false, error: 'code_expired' }); }
+      const who = last10(body.number);
+      if (who && who !== sg.number) return send(res, 200, { ok: false, error: 'number_mismatch', number: sg.number });
+      return send(res, 200, { ok: true, number: sg.number, hash: sg.hash });
+    }
+
     if (p === '/api/pending') {
       const now = Date.now();
       const jobs = [];
@@ -270,6 +370,16 @@ async function route(req, res) {
           jobs.push({ id: a.id, user: a.user, field: a.field, op: a.op, amount: a.amount });
         }
       }
+      for (const a of db.jobs) {
+        if (jobs.length >= 50) break;
+        if (a.status === 'pending' && now - a.createdAt > JOB_TTL * 2) { a.status = 'expired'; a.error = 'bot_offline'; a.doneAt = now; continue; }
+        const redeliver = a.status === 'sent' && now - (a.sentAt || 0) > JOB_TTL;
+        if (a.status === 'pending' || redeliver) {
+          a.status = 'sent'; a.sentAt = now;
+          const { id, type, kind, ref, qty, item, price, sellerName, minutes, hash, banned } = a;
+          jobs.push({ id, type, user: a.user, kind, ref, qty, item, price, sellerName, minutes, hash, banned });
+        }
+      }
       if (jobs.length) save();
       return send(res, 200, { ok: true, jobs });
     }
@@ -277,11 +387,19 @@ async function route(req, res) {
     if (p === '/api/ack') {
       const results = Array.isArray(body.results) ? body.results.slice(0, 100) : [];
       for (const r of results) {
-        const a = db.adjustments.find(x => x.id === String(r?.id));
+        const id = String(r?.id);
+        const a = db.adjustments.find(x => x.id === id) || db.jobs.find(x => x.id === id);
         if (!a || a.status === 'done' || a.status === 'cancelled') continue;
         a.status = r.ok ? 'done' : 'failed';
         a.doneAt = Date.now();
         if (!r.ok) a.error = String(r.error || 'failed').slice(0, 80);
+        if (r.msg) a.msg = String(r.msg).slice(0, 200);
+        if (Number.isFinite(Number(r.need))) a.need = Math.floor(Number(r.need));
+        if (Number.isFinite(Number(r.left))) a.left = Math.floor(Number(r.left));
+        if (Number.isFinite(Number(r.balance))) {
+          a.balanceAfter = Math.floor(Number(r.balance));
+          if (a.user && db.balances[a.user]) db.balances[a.user].balance = a.balanceAfter;
+        }
       }
       save();
       return send(res, 200, { ok: true });
@@ -309,6 +427,118 @@ async function route(req, res) {
       ok: true, siteName: SITE_NAME, players: us.length,
       totalMoney: us.reduce((s, u) => s + total(u), 0), updatedAt: db.usersUpdatedAt
     });
+  }
+
+  // ─────────── players: login + shop ───────────
+  if (p === '/shop/login' && req.method === 'POST') {
+    if (hit('ulogin', ip, 12, 15 * 60000)) return send(res, 429, { ok: false, error: 'too_many_attempts' });
+    const body = await readBody(req);
+    const key = last10(body.number);
+    if (key.length >= 7 && hit('unum', key, parseInt(process.env.LOGIN_ATTEMPTS, 10) || 8, 15 * 60000)) return send(res, 429, { ok: false, error: 'too_many_attempts' });
+    const acc = key.length >= 7 ? db.accounts[key] : null;
+    const good = checkPass(acc && acc.hash, body.password) && !!acc;   // always runs scrypt
+    if (!good) {
+      // right password but not verified in WhatsApp yet? say so (only with the correct password)
+      const pend = Object.values(db.signups).find(x => x.number === key && Date.now() - x.createdAt < SIGNUP_TTL);
+      if (!acc && pend && checkPass(pend.hash, body.password)) return send(res, 403, { ok: false, error: 'not_verified' });
+      await new Promise(r => setTimeout(r, 400));
+      return send(res, 401, { ok: false, error: 'wrong_login' });
+    }
+    if (acc.banned) return send(res, 403, { ok: false, error: 'banned' });
+    db.logins[key] = Date.now();
+    const sid = crypto.randomBytes(24).toString('base64url');
+    usessions.set(sid, { user: key, exp: Date.now() + 12 * 3600000 });
+    return send(res, 200, { ok: true }, { 'Set-Cookie': cookieHeader(req, sid + '.' + sign(sid), 12 * 3600, 'usid') });
+  }
+
+  if (p === '/shop/signup' && req.method === 'POST') {
+    if (req.headers['x-requested-with'] !== 'XMLHttpRequest') return send(res, 403, { ok: false, error: 'bad_request' });
+    if (hit('usignup', ip, 6, 3600000)) return send(res, 429, { ok: false, error: 'too_many_attempts' });
+    const body = await readBody(req);
+    const key = last10(body.number);
+    const pw = String(body.password || '');
+    if (key.length < 10) return send(res, 400, { ok: false, error: 'bad_number' });
+    if (pw.length < 6 || pw.length > 40 || /\s/.test(pw)) return send(res, 400, { ok: false, error: 'bad_password' });
+    if (hit('usignumber', key, 4, 3600000)) return send(res, 429, { ok: false, error: 'too_many_attempts' });
+    if (db.accounts[key]) return send(res, 409, { ok: false, error: 'exists' });
+    if (Object.keys(db.signups).length > 5000) return send(res, 503, { ok: false, error: 'busy' });
+    for (const [c, sg] of Object.entries(db.signups)) if (sg.number === key) delete db.signups[c];   // newest request wins
+    const code = newVerifyCode();
+    db.signups[code] = { number: key, hash: await hashPassAsync(pw), createdAt: Date.now() };
+    save();
+    return send(res, 200, { ok: true, code: code.slice(0, 4) + '-' + code.slice(4), minutes: SIGNUP_TTL / 60000 });
+  }
+
+  if (p.startsWith('/shop/api/') || p === '/shop/logout') {
+    if (hit('pub', ip, 240, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
+    const us = getSession(req, 'usid', usessions);
+    let acc = us ? db.accounts[us.user] : null;
+    if (acc && acc.banned) acc = null;
+    if (us && (!acc)) { usessions.delete(us.sid); }
+    if (req.method !== 'GET' && req.headers['x-requested-with'] !== 'XMLHttpRequest')
+      return send(res, 403, { ok: false, error: 'bad_request' });
+
+    if (p === '/shop/logout' && req.method === 'POST') {
+      if (us) usessions.delete(us.sid);
+      return send(res, 200, { ok: true }, { 'Set-Cookie': cookieHeader(req, '', 0, 'usid') });
+    }
+
+    if (p === '/shop/api/state') {
+      const now = Date.now();
+      const bal = acc ? db.balances[acc.jid] : null;
+      const m = db.market;
+      return send(res, 200, {
+        ok: true, siteName: SITE_NAME, updatedAt: m.updatedAt, shop: m.shop, coins: m.coins,
+        listings: m.listings.map(l => ({
+          id: l.id, item: l.item, name: l.name, qty: l.qty, price: l.price, seller: l.seller, kind: l.kind,
+          closedUntil: l.closedUntil > now ? l.closedUntil : 0, expiresAt: l.expiresAt,
+          mine: !!(acc && l.seller_id && l.seller_id === acc.jid)
+        })),
+        me: acc ? { name: (bal && bal.name) || acc.name, number: acc.number, balance: bal ? bal.balance : 0, bank: bal ? bal.bank : 0, level: bal ? bal.level : 1 } : null
+      });
+    }
+
+    if (!acc) return send(res, 401, { ok: false, error: 'not_logged_in' });
+
+    if (p === '/shop/api/order' && req.method === 'POST') {
+      if (hit('order', acc.number, 20, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
+      const b = await readBody(req);
+      const kind = String(b.kind || '');
+      const qty = Math.floor(Number(b.qty));
+      if (!Number.isFinite(qty) || qty < 1 || qty > 1e6) return send(res, 400, { ok: false, error: 'bad_qty' });
+      if (db.jobs.filter(a => a.type === 'buy' && a.user === acc.jid && OPEN(a)).length >= 5)
+        return send(res, 429, { ok: false, error: 'too_many_pending' });
+      let ref;
+      if (kind === 'market') {
+        const l = db.market.listings.find(x => x.id === String(b.ref));
+        if (!l) return send(res, 404, { ok: false, error: 'no_listing' });
+        if (l.seller_id && l.seller_id === acc.jid) return send(res, 400, { ok: false, error: 'own_listing' });
+        if (l.closedUntil > Date.now()) return send(res, 400, { ok: false, error: 'closed' });
+        if (qty > l.qty) return send(res, 400, { ok: false, error: 'not_enough_stock', left: l.qty });
+        ref = l.id;
+      } else if (kind === 'shop') {
+        const it = db.market.shop.find(x => x.key === String(b.ref));
+        if (!it) return send(res, 404, { ok: false, error: 'bad_item' });
+        if (it.out) return send(res, 400, { ok: false, error: 'out_of_stock' });
+        ref = it.key;
+      } else return send(res, 400, { ok: false, error: 'bad_kind' });
+      const j = newJob({ type: 'buy', kind, ref, qty, user: acc.jid, userName: acc.name });
+      save();
+      return send(res, 200, { ok: true, id: j.id });
+    }
+
+    if (p === '/shop/api/order' && req.method === 'GET') {
+      const j = db.jobs.find(x => x.id === String(url.searchParams.get('id')) && x.user === acc.jid);
+      if (!j) return send(res, 404, { ok: false, error: 'not_found' });
+      return send(res, 200, { ok: true, status: j.status, error: j.error || '', msg: j.msg || '', need: j.need, left: j.left, balance: j.balanceAfter });
+    }
+
+    if (p === '/shop/api/orders') {
+      const items = db.jobs.filter(x => x.type === 'buy' && x.user === acc.jid).slice(0, 15)
+        .map(j => ({ id: j.id, kind: j.kind, ref: j.ref, qty: j.qty, status: j.status, error: j.error || '', msg: j.msg || '', at: j.createdAt }));
+      return send(res, 200, { ok: true, items });
+    }
+    return send(res, 404, { ok: false, error: 'not_found' });
   }
 
   // ─────────── admin login ───────────
@@ -352,7 +582,11 @@ async function route(req, res) {
         totalMoney: us.reduce((s, u) => s + total(u), 0),
         activeCoupons: cs.filter(c => c.claims < c.maxClaims).length,
         couponValueLeft: cs.reduce((s, c) => s + c.amount * Math.max(0, c.maxClaims - c.claims), 0),
-        pendingEdits: db.adjustments.filter(a => a.status === 'pending' || a.status === 'sent').length,
+        pendingEdits: db.adjustments.filter(OPEN).length + db.jobs.filter(a => OPEN(a) && a.type !== 'buy').length,
+        accounts: Object.keys(db.accounts).length,
+        bannedAccounts: Object.values(db.accounts).filter(a => a.banned).length,
+        ordersToday: db.jobs.filter(a => a.type === 'buy' && a.status === 'done' && a.doneAt > Date.now() - 86400000).length,
+        marketUpdatedAt: db.market.updatedAt,
         usersUpdatedAt: db.usersUpdatedAt
       });
     }
@@ -444,6 +678,95 @@ async function route(req, res) {
       return send(res, 200, { ok: true });
     }
 
+    if (p === '/admin/api/market' && req.method === 'GET') {
+      const open = db.jobs.filter(a => OPEN(a) && String(a.type).startsWith('m_'));
+      const rows = db.market.listings.map(l => Object.assign({}, l, { pending: open.some(a => a.ref === l.id) }))
+        .sort((a, b) => a.item === b.item ? a.price - b.price : a.item.localeCompare(b.item));
+      return send(res, 200, { ok: true, listings: rows, shop: db.market.shop, coins: db.market.coins, updatedAt: db.market.updatedAt, waiting: open.length });
+    }
+
+    if (p === '/admin/api/market/add' && req.method === 'POST') {
+      const b = await readBody(req);
+      const item = String(b.item || '').toLowerCase();
+      const known = db.market.shop.some(x => x.key === item) || db.market.coins.some(x => x.key === item);
+      if (!db.market.updatedAt) return send(res, 400, { ok: false, error: 'bot_not_synced' });
+      if (!known) return send(res, 400, { ok: false, error: 'bad_item' });
+      const qty = parseAmount(b.qty), price = parseAmount(b.price);
+      if (!Number.isFinite(qty) || qty < 1 || qty > 1e9) return send(res, 400, { ok: false, error: 'bad_qty' });
+      if (!Number.isFinite(price) || price < 1 || price > 1e15) return send(res, 400, { ok: false, error: 'bad_price' });
+      const sellerName = String(b.sellerName || 'Official Store').trim().slice(0, 30) || 'Official Store';
+      newJob({ type: 'm_add', item, qty, price, sellerName, by: me });
+      addAudit(me, 'market_add', `${qty} × ${item} @ ${price} (${sellerName})`);
+      save();
+      return send(res, 200, { ok: true });
+    }
+
+    if (p === '/admin/api/market/op' && req.method === 'POST') {
+      const b = await readBody(req);
+      const op = String(b.op || '');
+      const ref = String(b.ref || '');
+      const l = db.market.listings.find(x => x.id === ref);
+      if (!l) return send(res, 404, { ok: false, error: 'listing_not_found' });
+      const job = { type: 'm_' + op, ref, by: me };
+      if (op === 'remove' || op === 'open') {}
+      else if (op === 'close') { const m = Math.floor(Number(b.minutes)); job.minutes = Number.isFinite(m) && m > 0 ? Math.min(m, 525600) : 0; }
+      else if (op === 'topup') { const q = parseAmount(b.qty); if (!Number.isFinite(q) || q < 1 || q > 1e9) return send(res, 400, { ok: false, error: 'bad_qty' }); job.qty = q; }
+      else if (op === 'price') { const pr = parseAmount(b.price); if (!Number.isFinite(pr) || pr < 1 || pr > 1e15) return send(res, 400, { ok: false, error: 'bad_price' }); job.price = pr; }
+      else return send(res, 400, { ok: false, error: 'bad_op' });
+      newJob(job);
+      addAudit(me, 'market_' + op, `#${ref} ${l.name}` + (job.qty ? ` +${job.qty}` : '') + (job.price ? ` → ${job.price}` : '') + (job.minutes ? ` ${job.minutes}min` : ''));
+      save();
+      return send(res, 200, { ok: true });
+    }
+
+    if (p === '/admin/api/accounts' && req.method === 'GET') {
+      const q = String(url.searchParams.get('q') || '').toLowerCase().trim();
+      const open = db.jobs.filter(a => OPEN(a) && String(a.type).startsWith('acct_'));
+      let list = Object.values(db.accounts).map(a => {
+        const b = db.balances[a.jid] || {};
+        return { number: a.number, name: (b.name || a.name || 'Player'), banned: !!a.banned, balance: b.balance || 0, bank: b.bank || 0,
+                 lastLogin: db.logins[a.number] || 0, pending: open.some(x => x.user === a.jid) };
+      });
+      if (q) list = list.filter(a => a.number.includes(q.replace(/\D/g, '') || '\u0000') || a.name.toLowerCase().includes(q));
+      list.sort((a, b) => a.name.localeCompare(b.name));
+      const waiting = Object.values(db.signups).filter(x => Date.now() - x.createdAt < SIGNUP_TTL).length;
+      return send(res, 200, { ok: true, items: list.slice(0, 500), total: Object.keys(db.accounts).length, banned: list.filter(a => a.banned).length, waiting });
+    }
+
+    if (p.startsWith('/admin/api/accounts/') && req.method === 'POST') {
+      const b = await readBody(req);
+      const key = last10(b.number);
+      const acc = db.accounts[key];
+      if (!acc) return send(res, 404, { ok: false, error: 'account_not_found' });
+      if (p === '/admin/api/accounts/password') {
+        const pw = String(b.password || '');
+        if (pw.length < 6 || pw.length > 40 || /\s/.test(pw)) return send(res, 400, { ok: false, error: 'bad_password' });
+        const hash = await hashPassAsync(pw);
+        acc.hash = hash; killSessions(key);
+        newJob({ type: 'acct_pass', user: acc.jid, number: key, hash, by: me });
+        addAudit(me, 'account_password', `${acc.name} (${key})`);
+      } else if (p === '/admin/api/accounts/ban') {
+        const banned = !!b.banned;
+        acc.banned = banned; if (banned) killSessions(key);
+        newJob({ type: 'acct_ban', user: acc.jid, number: key, banned, by: me });
+        addAudit(me, banned ? 'account_ban' : 'account_unban', `${acc.name} (${key})`);
+      } else if (p === '/admin/api/accounts/delete') {
+        killSessions(key); delete db.accounts[key];
+        newJob({ type: 'acct_del', user: acc.jid, number: key, by: me });
+        addAudit(me, 'account_delete', `${acc.name} (${key})`);
+      } else return send(res, 404, { ok: false, error: 'not_found' });
+      save();
+      return send(res, 200, { ok: true });
+    }
+
+    if (p === '/admin/api/jobs') {
+      return send(res, 200, { ok: true, items: db.jobs.slice(0, 80).map(a => ({
+        id: a.id, type: a.type, status: a.status, createdAt: a.createdAt, doneAt: a.doneAt || 0,
+        who: a.userName || a.by || '', ref: a.ref, item: a.item, qty: a.qty, price: a.price,
+        error: a.error || '', msg: a.msg || ''
+      })) });
+    }
+
     if (p === '/admin/api/audit') return send(res, 200, { ok: true, items: db.audit.slice(0, 100) });
 
     return send(res, 404, { ok: false, error: 'not_found' });
@@ -453,6 +776,7 @@ async function route(req, res) {
   if (req.method === 'GET') {
     if (p === '/' || p === '/index.html') return sendFile(res, 'index.html');
     if (p === '/admin' || p === '/admin/') return sendFile(res, 'admin.html');
+    if (p === '/shop' || p === '/shop/') return sendFile(res, 'shop.html');
     if (/^\/[A-Za-z0-9_.-]+$/.test(p) && ['.css', '.js', '.svg', '.png', '.ico'].includes(path.extname(p)))
       return sendFile(res, p.slice(1));
   }
