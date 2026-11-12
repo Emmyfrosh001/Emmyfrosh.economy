@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Admin</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%94%91%3C/text%3E%3C/svg%3E">
+</head>
+<body class="admin">
+
+  <!-- LOGIN -->
+  <main id="loginView" class="login" hidden>
+    <form id="loginForm" class="login-card" autocomplete="on">
+      <h1>Admin sign in</h1>
+      <label for="u">Username</label>
+      <input id="u" name="username" type="text" autocomplete="username" required>
+      <label for="p">Password</label>
+      <input id="p" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit" class="btn primary">Sign in</button>
+      <p id="loginErr" class="err" role="alert" hidden></p>
+    </form>
+  </main>
+
+  <!-- DASHBOARD -->
+  <div id="dashView" hidden>
+    <header class="bar">
+      <div class="wrap bar-in">
+        <strong id="brand">Admin</strong>
+        <nav class="tabs" role="tablist" aria-label="Sections">
+          <button class="tab on" data-tab="overview" role="tab">Overview</button>
+          <button class="tab" data-tab="players" role="tab">Players</button>
+          <button class="tab" data-tab="coupons" role="tab">Coupons</button>
+          <button class="tab" data-tab="activity" role="tab">Activity</button>
+        </nav>
+        <button id="logout" class="btn ghost">Sign out</button>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <p id="toast" class="toast" role="status" hidden></p>
+
+      <!-- overview -->
+      <section id="tab-overview" class="panel">
+        <h2>Overview</h2>
+        <div class="stats" id="stats"></div>
+        <p class="hint">Player numbers come from the bot. It sends fresh standings every 5 minutes and right after it applies one of your edits.</p>
+      </section>
+
+      <!-- players -->
+      <section id="tab-players" class="panel" hidden>
+        <h2>Players</h2>
+        <div class="split">
+          <div>
+            <div class="row">
+              <input id="search" type="search" placeholder="Search by name" aria-label="Search players">
+              <button id="searchBtn" class="btn">Search</button>
+            </div>
+            <div class="table-scroll">
+              <table class="board">
+                <thead><tr><th>Player</th><th class="n">Wallet</th><th class="n">Bank</th><th class="n">Gams</th><th class="n">Level</th><th></th></tr></thead>
+                <tbody id="userRows"></tbody>
+              </table>
+            </div>
+            <p class="empty" id="userEmpty" hidden>No players found.</p>
+            <div class="row pager">
+              <button id="prev" class="btn ghost">Previous</button>
+              <span id="pageInfo"></span>
+              <button id="next" class="btn ghost">Next</button>
+            </div>
+          </div>
+
+          <form id="editor" class="editor" autocomplete="off">
+            <h3>Edit money</h3>
+            <p id="editTarget" class="muted">Pick a player from the list.</p>
+            <label for="field">What to change</label>
+            <select id="field">
+              <option value="balance">Wallet</option>
+              <option value="bank">Bank</option>
+              <option value="gams">Gams</option>
+            </select>
+            <label for="op">Action</label>
+            <select id="op">
+              <option value="add">Add</option>
+              <option value="remove">Remove</option>
+              <option value="set">Set exactly to</option>
+            </select>
+            <label for="amount">Amount</label>
+            <input id="amount" type="text" inputmode="text" placeholder="5000, 10k, 2.5m, 1b" required>
+            <button type="submit" id="applyBtn" class="btn primary" disabled>Apply edit</button>
+            <p class="hint">The bot applies edits within about 30 seconds.</p>
+          </form>
+        </div>
+      </section>
+
+      <!-- coupons -->
+      <section id="tab-coupons" class="panel" hidden>
+        <h2>Coupons</h2>
+        <form id="couponForm" class="inline-form" autocomplete="off">
+          <div><label for="cAmount">Value each</label><input id="cAmount" type="text" placeholder="10k, 1m" required></div>
+          <div><label for="cPersons">People per code</label><input id="cPersons" type="number" min="1" value="1" required></div>
+          <div><label for="cCount">How many codes</label><input id="cCount" type="number" min="1" max="50" value="1" required></div>
+          <div><label for="cNote">Note (only you see it)</label><input id="cNote" type="text" maxlength="60"></div>
+          <button type="submit" class="btn primary">Generate</button>
+        </form>
+
+        <div id="newCodes" class="newcodes" hidden>
+          <h3>New codes</h3>
+          <ul id="newCodeList"></ul>
+          <button id="copyAll" class="btn">Copy all</button>
+        </div>
+
+        <h3>All coupons</h3>
+        <div class="table-scroll">
+          <table class="board">
+            <thead><tr><th>Code</th><th class="n">Value</th><th class="n">Claimed</th><th>Note</th><th>Created</th><th></th></tr></thead>
+            <tbody id="couponRows"></tbody>
+          </table>
+        </div>
+        <p class="empty" id="couponEmpty" hidden>No coupons yet. Generate one above.</p>
+      </section>
+
+      <!-- activity -->
+      <section id="tab-activity" class="panel" hidden>
+        <h2>Money edits</h2>
+        <div class="table-scroll">
+          <table class="board">
+            <thead><tr><th>When</th><th>Player</th><th>Change</th><th>Status</th><th></th></tr></thead>
+            <tbody id="adjRows"></tbody>
+          </table>
+        </div>
+        <h2>Admin log</h2>
+        <div class="table-scroll">
+          <table class="board">
+            <thead><tr><th>When</th><th>Action</th><th>Detail</th></tr></thead>
+            <tbody id="auditRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#040b1f">
+  <title>Top players</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%91%91%3C/text%3E%3C/svg%3E">
+</head>
+<body class="public">
+
+  <!-- icon sprite (drawn once, reused with <use>) -->
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <defs>
+      <linearGradient id="gl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6fb4ff"/><stop offset="1" stop-color="#1f5fe0"/></linearGradient>
+      <linearGradient id="gb" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3b86ff"/><stop offset="1" stop-color="#0d36b0"/></linearGradient>
+      <linearGradient id="gr" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#a9dcff"/><stop offset="1" stop-color="#5eb6ff"/></linearGradient>
+    </defs>
+
+    <symbol id="crown" viewBox="0 0 64 48">
+      <path d="M4 14 18 26 32 4 46 26 60 14 54 42H10Z"/>
+      <rect x="10" y="37" width="44" height="5" rx="2" fill="#fff" opacity=".3"/>
+      <circle cx="4" cy="12" r="3.5"/><circle cx="32" cy="4" r="4"/><circle cx="60" cy="12" r="3.5"/>
+      <circle cx="32" cy="29" r="3.4" fill="#fff" opacity=".85"/>
+    </symbol>
+
+    <symbol id="gift" viewBox="0 0 120 120">
+      <rect x="14" y="38" width="92" height="24" rx="5" fill="url(#gl)"/>
+      <rect x="20" y="62" width="80" height="50" rx="5" fill="url(#gb)"/>
+      <rect x="52" y="38" width="16" height="74" fill="url(#gr)"/>
+      <path d="M60 38C38 6 12 22 36 38Z" fill="url(#gr)"/>
+      <path d="M60 38C82 6 108 22 84 38Z" fill="url(#gr)"/>
+      <circle cx="60" cy="38" r="8" fill="#cdeaff"/>
+      <rect x="14" y="38" width="92" height="3" rx="1.5" fill="#fff" opacity=".35"/>
+      <rect x="24" y="66" width="6" height="40" rx="3" fill="#fff" opacity=".18"/>
+    </symbol>
+
+    <symbol id="users" viewBox="0 0 64 64">
+      <circle cx="32" cy="20" r="10"/>
+      <path d="M14 56c0-12 8-19 18-19s18 7 18 19z"/>
+      <circle cx="12" cy="27" r="6.5" opacity=".75"/><path d="M0 54c0-8 5-13 12-13 2 0 4 .5 6 1.4C14 46 12 50 12 54z" opacity=".75"/>
+      <circle cx="52" cy="27" r="6.5" opacity=".75"/><path d="M64 54c0-8-5-13-12-13-2 0-4 .5-6 1.4C50 46 52 50 52 54z" opacity=".75"/>
+    </symbol>
+
+    <symbol id="trophy" viewBox="0 0 64 64">
+      <path d="M18 6h28v18a14 14 0 0 1-28 0z"/>
+      <path d="M18 11H6v7a13 13 0 0 0 13 13v-5a8 8 0 0 1-8-8v-2h7zM46 11h12v7a13 13 0 0 1-13 13v-5a8 8 0 0 0 8-8v-2h-7z" opacity=".85"/>
+      <rect x="29" y="38" width="6" height="11"/>
+      <path d="M19 58h26v-4a5 5 0 0 0-5-5H24a5 5 0 0 0-5 5z"/>
+    </symbol>
+
+    <symbol id="bars" viewBox="0 0 24 24">
+      <rect x="2" y="12" width="5.5" height="10" rx="1.6"/><rect x="9.2" y="2" width="5.5" height="20" rx="1.6"/><rect x="16.5" y="8" width="5.5" height="14" rx="1.6"/>
+    </symbol>
+
+    <symbol id="bag" viewBox="0 0 64 64">
+      <path d="M22 4Q32 12 42 4L38 17H26Z"/>
+      <path d="M26 17H38C55 28 59 42 55 52Q52 61 32 61Q12 61 9 52C5 42 9 28 26 17Z"/>
+      <text x="32" y="52" text-anchor="middle" font-size="28" font-weight="900" fill="#7a4a00" font-family="Arial, sans-serif">$</text>
+    </symbol>
+
+    <symbol id="ticket" viewBox="0 0 64 48">
+      <path d="M3 7h58v11a6 6 0 0 0 0 12v11H3V30a6 6 0 0 0 0-12z"/>
+      <rect x="14" y="14" width="36" height="20" rx="3" fill="none" stroke="#04123a" stroke-width="2.5" stroke-dasharray="4 3" opacity=".7"/>
+    </symbol>
+  </svg>
+
+  <header class="topbar">
+    <div class="wrap topbar-in">
+      <button class="menu-btn" id="menuBtn" type="button" aria-label="Menu" aria-expanded="false" aria-controls="navMenu">
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+      </button>
+      <div class="brand">
+        <svg class="ic" aria-hidden="true"><use href="#crown"/></svg>
+        <span>EMMYFROSH-<span class="ai">AI</span></span>
+      </div>
+    </div>
+    <nav class="nav-menu" id="navMenu" aria-label="Page sections" hidden>
+      <a href="#board">Leaderboard</a>
+      <a href="#redeem">Redeem a coupon</a>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    <section class="hero" aria-labelledby="hero-h">
+      <div class="hero-text">
+        <p class="pill"><svg class="ic" aria-hidden="true"><use href="#crown"/></svg><span id="siteName">Coupon Hub</span></p>
+        <h1 id="hero-h">Who holds the<br>most <span class="hl">cash</span></h1>
+        <div class="meta">
+          <svg class="ic" aria-hidden="true"><use href="#users"/></svg>
+          <p class="sub" id="meta">Loading the latest standings…</p>
+        </div>
+      </div>
+      <div class="gift" aria-hidden="true">
+        <svg class="crown gift-crown"><use href="#crown"/></svg>
+        <svg class="gift-box"><use href="#gift"/></svg>
+        <div class="gift-ring"></div>
+      </div>
+    </section>
+
+    <section aria-labelledby="podium-h" class="podium" id="podium" hidden>
+      <h2 id="podium-h" class="sr-only">Top three</h2>
+    </section>
+
+    <section class="tiles" aria-label="Totals">
+      <div class="tile tile-players">
+        <svg class="ic" aria-hidden="true"><use href="#users"/></svg>
+        <div class="tile-txt"><span class="tile-k">Total Players</span><span class="tile-v" id="tilePlayers">0</span></div>
+      </div>
+      <div class="tile tile-money">
+        <svg class="ic" aria-hidden="true"><use href="#bag"/></svg>
+        <div class="tile-txt"><span class="tile-k">Total Amount</span><span class="tile-v" id="tileMoney">$0</span></div>
+      </div>
+    </section>
+
+    <section class="board-card" id="board" aria-labelledby="board-h">
+      <div class="board-head">
+        <svg class="ic trophy" aria-hidden="true"><use href="#trophy"/></svg>
+        <h2 id="board-h">Leaderboard</h2>
+        <svg class="ic bars" aria-hidden="true"><use href="#bars"/></svg>
+      </div>
+      <div class="table-scroll">
+        <table class="board">
+          <thead>
+            <tr><th class="r">#</th><th>Player</th><th>Job</th><th class="c">Level</th><th class="n">Total money</th></tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="empty" hidden>No players yet. The bot sends its standings here every few minutes.</p>
+    </section>
+
+    <section class="redeem" id="redeem" aria-labelledby="redeem-h">
+      <svg class="ic" aria-hidden="true"><use href="#ticket"/></svg>
+      <span class="sep" aria-hidden="true"></span>
+      <div>
+        <h2 id="redeem-h">Got a coupon code?</h2>
+        <p>Open the WhatsApp bot and send <code>.redeemcoupon YOUR-CODE</code>. The money lands in your wallet straight away. Each code works once per person.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="foot-row">
+      <svg class="ic" aria-hidden="true"><use href="#crown"/></svg>
+      <span class="foot-line" aria-hidden="true"></span>
+      <span class="foot-name">EMMYFROSH-AI</span>
+      <span class="foot-line" aria-hidden="true"></span>
+      <svg class="ic" aria-hidden="true"><use href="#crown"/></svg>
+    </div>
+    <p class="foot-tag">PLAY • WIN • ENJOY</p>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
