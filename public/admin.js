@@ -27,7 +27,14 @@ const ERRORS = {
   listing_not_found: 'That listing is gone. Refresh the list.',
   bad_op: 'Unknown action.',
   account_not_found: 'That account is gone. Refresh the list.',
-  bad_password: 'Password must be 6–40 characters with no spaces.'
+  bad_password: 'Password must be 6–40 characters with no spaces.',
+  bad_id: 'ID must be 2–24 letters, numbers or _ (no spaces).',
+  bad_name: 'Give it a name.',
+  id_taken: 'That ID is already used by a good or a coin. Pick another.',
+  id_builtin: 'That ID belongs to a built-in item. Use its Price button instead.',
+  not_custom: 'Only goods and coins you created can be removed.',
+  chat_not_found: 'That chat is gone. Refresh the list.',
+  empty: 'Type a message first.'
 };
 
 async function api(path, method, body) {
@@ -88,12 +95,13 @@ document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () =>
   if (b.dataset.tab === 'overview') loadOverview();
   if (b.dataset.tab === 'players') loadUsers();
   if (b.dataset.tab === 'market') loadMarket();
+  if (b.dataset.tab === 'chats') loadChats();
   if (b.dataset.tab === 'accounts') loadAccounts();
   if (b.dataset.tab === 'coupons') loadCoupons();
   if (b.dataset.tab === 'activity') loadActivity();
 }));
 
-function refreshAll() { loadOverview(); loadUsers(); loadMarket(); loadCoupons(); loadActivity(); }
+function refreshAll() { loadOverview(); loadUsers(); loadMarket(); loadCoupons(); loadActivity(); loadChats(); }
 
 // ── overview ────────────────────────────────────────────────────
 async function loadOverview() {
@@ -193,7 +201,7 @@ async function loadMarket() {
     $('marketNote').textContent = mData.updatedAt
       ? `Last update from the bot: ${new Date(mData.updatedAt).toLocaleTimeString()}. Changes are applied by the bot within about 10 seconds.`
       : 'The bot has not sent the market yet.';
-    renderMarket();
+    renderMarket(); renderItems();
   } catch (e) { if (e.message !== 'not_logged_in') say(e); }
 }
 
@@ -232,6 +240,45 @@ async function op(name, l, extra) {
   } catch (err) { say(err); }
 }
 
+// ── goods & coins ───────────────────────────────────────────────
+function renderItems() {
+  if (!mData) return;
+  const q = $('iSearch').value.toLowerCase().trim();
+  const body = $('iRows'); body.replaceChildren();
+  const all = [...mData.shop.map(x => Object.assign({ type: 'Good' }, x)), ...mData.coins.map(x => Object.assign({ type: 'Coin' }, x))]
+    .filter(x => !q || x.key.includes(q) || x.name.toLowerCase().includes(q));
+  all.sort((a, b) => (b.custom ? 1 : 0) - (a.custom ? 1 : 0));   // yours first
+  all.forEach(x => {
+    const tr = el('tr');
+    const nameCell = td(x.name, 'name');
+    if (x.custom) nameCell.append(el('span', 'badge admin-b', 'yours'));
+    const acts = el('td', 'acts');
+    const mk = (label, cls, fn) => { const b = el('button', 'btn small ' + (cls || ''), label); b.type = 'button'; b.addEventListener('click', fn); acts.append(b); };
+    mk('Price', '', async () => {
+      const v = prompt(`New ${x.type === 'Coin' ? 'rate' : 'price'} for "${x.name}" (now $${fmt(x.price)})`, '');
+      if (!v) return;
+      try { await api('/admin/api/item/price', 'POST', { key: x.key, price: v }); toast('Queued. The bot applies it within about 10 seconds.'); setTimeout(loadMarket, 12000); } catch (err) { say(err); }
+    });
+    if (x.custom) mk('Remove', 'danger', async () => {
+      if (!confirm(`Remove "${x.name}"? It disappears from the shop, the market AND every player's inventory.`)) return;
+      try { await api('/admin/api/item/delete', 'POST', { key: x.key }); toast('Queued. The bot removes it within about 10 seconds.'); setTimeout(loadMarket, 12000); } catch (err) { say(err); }
+    });
+    tr.append(td(x.key), nameCell, td(x.type), td('$' + fmt(x.price), 'n'), acts);
+    body.append(tr);
+  });
+}
+$('iSearch').addEventListener('input', renderItems);
+$('iKind').addEventListener('change', () => { $('iPriceLbl').textContent = $('iKind').value === 'coin' ? 'Rate (price of 1 coin)' : 'Price'; });
+$('itemForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    await api('/admin/api/item/add', 'POST', { kind: $('iKind').value, key: $('iKey').value, name: $('iName').value, price: $('iPrice').value });
+    toast('Queued. It shows up in the shop / market within about 10 seconds.');
+    $('iKey').value = ''; $('iName').value = ''; $('iPrice').value = '';
+    setTimeout(loadMarket, 12000);
+  } catch (err) { say(err); }
+});
+
 $('mSearch').addEventListener('input', renderMarket);
 $('mAddForm').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -243,6 +290,64 @@ $('mAddForm').addEventListener('submit', async (e) => {
   } catch (err) { say(err); }
 });
 
+
+// ── customer chat ───────────────────────────────────────────────
+let chatId = null;
+const chatOpen = () => !$('tab-chats').hidden && !$('dashView').hidden;
+
+async function loadChats() {
+  try {
+    const j = await api('/admin/api/chats');
+    const b = $('chatBadge'); b.hidden = !j.unread; b.textContent = j.unread;
+    if (!chatOpen()) return;
+    const box = $('chatList'); box.replaceChildren();
+    $('chatEmpty').hidden = j.items.length > 0;
+    j.items.forEach(c => {
+      const it = el('button', 'chat-item' + (c.id === chatId ? ' on' : '')); it.type = 'button';
+      const top = el('strong'); top.append(el('span', '', c.name + (c.number ? ' · ' + c.number : '')));
+      if (c.unread) top.append(el('span', 'dot', String(c.unread)));
+      it.append(top, el('small', '', (c.lastFrom === 'admin' ? 'You: ' : '') + c.last), el('small', '', when(c.updatedAt)));
+      it.addEventListener('click', () => { chatId = c.id; loadChats(); loadChat(true); });
+      box.append(it);
+    });
+    if (chatId) loadChat(false);
+  } catch (e) { if (e.message !== 'not_logged_in') say(e); }
+}
+
+async function loadChat(scroll) {
+  if (!chatId) return;
+  try {
+    const j = await api('/admin/api/chats/messages?id=' + encodeURIComponent(chatId));
+    $('chatBox').hidden = false;
+    $('chatWho').textContent = j.name + (j.number ? ' · ' + j.number : '');
+    const m = $('chatMsgs');
+    const near = m.scrollHeight - m.scrollTop - m.clientHeight < 80;
+    m.replaceChildren();
+    j.messages.forEach(x => {
+      const d = el('div', 'chat-m ' + x.from);
+      d.append(el('span', '', x.text), el('time', '', new Date(x.at).toLocaleString()));
+      m.append(d);
+    });
+    if (scroll || near) m.scrollTop = m.scrollHeight;
+  } catch (e) { if (e.message === 'chat_not_found') { chatId = null; $('chatBox').hidden = true; } else if (e.message !== 'not_logged_in') say(e); }
+}
+
+$('chatForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const text = $('chatText').value.trim();
+  if (!text || !chatId) return;
+  try {
+    await api('/admin/api/chats/reply', 'POST', { id: chatId, text });
+    $('chatText').value = '';
+    loadChat(true); loadChats();
+  } catch (err) { say(err); }
+});
+$('chatText').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('chatForm').requestSubmit(); } });
+$('chatDel').addEventListener('click', async () => {
+  if (!chatId || !confirm('Delete this whole chat?')) return;
+  try { await api('/admin/api/chats/delete', 'POST', { id: chatId }); chatId = null; $('chatBox').hidden = true; loadChats(); } catch (err) { say(err); }
+});
+setInterval(() => { if (!$('dashView').hidden && !document.hidden) loadChats(); }, 5000);
 
 // ── accounts ────────────────────────────────────────────────────
 let accQuery = '';
@@ -336,7 +441,7 @@ async function loadCoupons() {
 
 // ── activity ────────────────────────────────────────────────────
 const STATUS = { pending: 'Waiting for bot', sent: 'Sent to bot', done: 'Applied', failed: 'Failed', cancelled: 'Cancelled', expired: 'Expired' };
-const JOBNAME = { buy: 'Order', m_add: 'Add goods', m_remove: 'Remove', m_close: 'Close', m_open: 'Open', m_topup: 'Top up', m_price: 'Change price', acct_pass: 'Change password', acct_ban: 'Ban / unban', acct_del: 'Delete login' };
+const JOBNAME = { buy: 'Order', m_add: 'Add goods', m_remove: 'Remove', m_close: 'Close', m_open: 'Open', m_topup: 'Top up', m_price: 'Change price', item_add: 'Create good / coin', item_price: 'Change item price', item_del: 'Remove good / coin', acct_pass: 'Change password', acct_ban: 'Ban / unban', acct_del: 'Delete login' };
 
 async function loadActivity() {
   try {
