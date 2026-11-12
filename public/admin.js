@@ -19,7 +19,15 @@ const ERRORS = {
   bad_claims: 'People per code must be between 1 and 100000.',
   not_logged_in: 'Your session ended. Sign in again.',
   cannot_cancel: 'That edit was already sent to the bot.',
-  not_found: 'Not found.'
+  not_found: 'Not found.',
+  bot_not_synced: 'The bot has not sent the market yet. Wait a moment and try again.',
+  bad_item: 'Pick an item from the list.',
+  bad_qty: 'Enter a valid quantity, like 10 or 1k.',
+  bad_price: 'Enter a valid price, like 5000 or 2.5m.',
+  listing_not_found: 'That listing is gone. Refresh the list.',
+  bad_op: 'Unknown action.',
+  account_not_found: 'That account is gone. Refresh the list.',
+  bad_password: 'Password must be 6–40 characters with no spaces.'
 };
 
 async function api(path, method, body) {
@@ -79,11 +87,13 @@ document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () =>
   document.querySelectorAll('.panel').forEach(p => { p.hidden = p.id !== 'tab-' + b.dataset.tab; });
   if (b.dataset.tab === 'overview') loadOverview();
   if (b.dataset.tab === 'players') loadUsers();
+  if (b.dataset.tab === 'market') loadMarket();
+  if (b.dataset.tab === 'accounts') loadAccounts();
   if (b.dataset.tab === 'coupons') loadCoupons();
   if (b.dataset.tab === 'activity') loadActivity();
 }));
 
-function refreshAll() { loadOverview(); loadUsers(); loadCoupons(); loadActivity(); }
+function refreshAll() { loadOverview(); loadUsers(); loadMarket(); loadCoupons(); loadActivity(); }
 
 // ── overview ────────────────────────────────────────────────────
 async function loadOverview() {
@@ -96,7 +106,10 @@ async function loadOverview() {
       ['Money in circulation', '$' + fmt(o.totalMoney)],
       ['Coupons still open', fmt(o.activeCoupons)],
       ['Coupon value unclaimed', '$' + fmt(o.couponValueLeft)],
-      ['Edits waiting for the bot', fmt(o.pendingEdits)],
+      ['Changes waiting for the bot', fmt(o.pendingEdits)],
+      ['Players with a site login', fmt(o.accounts)],
+      ['Banned accounts', fmt(o.bannedAccounts)],
+      ['Site orders (24h)', fmt(o.ordersToday)],
       ['Last bot update', o.usersUpdatedAt ? new Date(o.usersUpdatedAt).toLocaleString() : 'never']
     ].forEach(([k, v]) => {
       const d = el('div', 'stat');
@@ -161,6 +174,113 @@ $('editor').addEventListener('submit', async (e) => {
   } catch (err) { say(err); }
 });
 
+
+// ── market ──────────────────────────────────────────────────────
+let mData = null;
+
+async function loadMarket() {
+  try {
+    mData = await api('/admin/api/market');
+    const sel = $('mItem');
+    if (sel.options.length !== mData.shop.length + mData.coins.length) {
+      sel.replaceChildren();
+      const g1 = document.createElement('optgroup'); g1.label = 'Shop items';
+      mData.shop.forEach(x => g1.append(new Option(`${x.name} (shop $${fmt(x.price)})`, x.key)));
+      const g2 = document.createElement('optgroup'); g2.label = 'Coins';
+      mData.coins.forEach(x => g2.append(new Option(`${x.name} (rate $${fmt(x.price)})`, x.key)));
+      sel.append(g1, g2);
+    }
+    $('marketNote').textContent = mData.updatedAt
+      ? `Last update from the bot: ${new Date(mData.updatedAt).toLocaleTimeString()}. Changes are applied by the bot within about 10 seconds.`
+      : 'The bot has not sent the market yet.';
+    renderMarket();
+  } catch (e) { if (e.message !== 'not_logged_in') say(e); }
+}
+
+function renderMarket() {
+  if (!mData) return;
+  const q = $('mSearch').value.toLowerCase().trim();
+  const body = $('mRows'); body.replaceChildren();
+  const rows = mData.listings.filter(l => !q || l.name.toLowerCase().includes(q) || l.seller.toLowerCase().includes(q) || l.id === q);
+  $('mEmpty').hidden = rows.length > 0;
+  rows.forEach(l => {
+    const tr = el('tr', l.closedUntil ? 'used' : '');
+    const nameCell = td(l.name, 'name');
+    if (l.kind === 'admin') nameCell.append(el('span', 'badge admin-b', 'yours'));
+    const st = el('td');
+    st.append(document.createTextNode(l.closedUntil ? 'Closed' : 'Open'));
+    if (l.closedUntil) st.append(el('span', 'badge closed', l.closedUntil > Date.now() + 5 * 365 * 86400000 ? 'until reopened' : 'opens ' + new Date(l.closedUntil).toLocaleString()));
+    if (l.pending) st.append(el('span', 'badge', 'change pending'));
+    const acts = el('td', 'acts');
+    const mk = (label, cls, fn) => { const b = el('button', 'btn small ' + (cls || ''), label); b.type = 'button'; b.addEventListener('click', fn); acts.append(b); };
+    if (l.closedUntil) mk('Open', '', () => op('open', l));
+    else mk('Close', '', () => { const m = prompt('Close for how many minutes? (leave empty = until you open it again)', ''); if (m !== null) op('close', l, { minutes: m }); });
+    mk('+ Stock', '', () => { const v = prompt(`Add how many to "${l.name}"?`, ''); if (v) op('topup', l, { qty: v }); });
+    mk('Price', '', () => { const v = prompt(`New price each for "${l.name}" (now $${fmt(l.price)})`, ''); if (v) op('price', l, { price: v }); });
+    mk('Remove', 'danger', () => { if (confirm(`Remove listing #${l.id} (${l.name})?` + (l.kind === 'player' ? ' The items go back to the seller.' : ''))) op('remove', l); });
+    tr.append(td('#' + l.id), nameCell, td(fmt(l.qty), 'n'), td('$' + fmt(l.price), 'n'), td(l.seller), st, acts);
+    body.append(tr);
+  });
+}
+
+async function op(name, l, extra) {
+  try {
+    await api('/admin/api/market/op', 'POST', Object.assign({ op: name, ref: l.id }, extra || {}));
+    toast('Queued. The bot applies it within about 10 seconds.');
+    l.pending = true; renderMarket(); loadOverview();
+    setTimeout(loadMarket, 12000);
+  } catch (err) { say(err); }
+}
+
+$('mSearch').addEventListener('input', renderMarket);
+$('mAddForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    await api('/admin/api/market/add', 'POST', { item: $('mItem').value, qty: $('mQty').value, price: $('mPrice').value, sellerName: $('mSeller').value });
+    toast('Queued. It shows on the market within about 10 seconds.');
+    $('mQty').value = ''; $('mPrice').value = '';
+    setTimeout(loadMarket, 12000);
+  } catch (err) { say(err); }
+});
+
+
+// ── accounts ────────────────────────────────────────────────────
+let accQuery = '';
+async function loadAccounts() {
+  try {
+    const j = await api('/admin/api/accounts?q=' + encodeURIComponent(accQuery));
+    const body = $('accRows'); body.replaceChildren();
+    $('accEmpty').hidden = j.items.length > 0;
+    $('accNote').textContent = `${fmt(j.total)} account(s), ${fmt(j.banned)} banned, ${fmt(j.waiting)} sign-up(s) waiting for WhatsApp confirmation. Changes are applied by the bot within about 10 seconds.`;
+    j.items.forEach(a => {
+      const tr = el('tr', a.banned ? 'used' : '');
+      const st = el('td');
+      st.append(document.createTextNode(a.banned ? 'Banned' : 'Active'));
+      if (a.banned) st.append(el('span', 'badge closed', 'no login'));
+      if (a.pending) st.append(el('span', 'badge', 'change pending'));
+      const acts = el('td', 'acts');
+      const mk = (label, cls, fn) => { const b = el('button', 'btn small ' + (cls || ''), label); b.type = 'button'; b.addEventListener('click', fn); acts.append(b); };
+      mk('Change password', '', async () => {
+        const pw = prompt(`New password for ${a.name} (${a.number}). 6–40 characters, no spaces.`, '');
+        if (!pw) return;
+        try { await api('/admin/api/accounts/password', 'POST', { number: a.number, password: pw }); toast('Password changed. Tell the player the new one.'); loadAccounts(); } catch (e) { say(e); }
+      });
+      mk(a.banned ? 'Unban' : 'Ban', a.banned ? '' : 'warn', async () => {
+        if (!confirm(`${a.banned ? 'Unban' : 'Ban'} ${a.name} (${a.number})?` + (a.banned ? '' : ' They will be logged out and cannot buy on the website.'))) return;
+        try { await api('/admin/api/accounts/ban', 'POST', { number: a.number, banned: !a.banned }); toast(a.banned ? 'Unbanned.' : 'Banned.'); loadAccounts(); } catch (e) { say(e); }
+      });
+      mk('Delete login', 'danger', async () => {
+        if (!confirm(`Delete the website login for ${a.name} (${a.number})? Their game money and items are not touched. They can create a new account.`)) return;
+        try { await api('/admin/api/accounts/delete', 'POST', { number: a.number }); toast('Login deleted.'); loadAccounts(); } catch (e) { say(e); }
+      });
+      tr.append(td(a.name, 'name'), td(a.number), td('$' + fmt(a.balance), 'n'), td(a.lastLogin ? when(a.lastLogin) : 'never'), st, acts);
+      body.append(tr);
+    });
+  } catch (e) { if (e.message !== 'not_logged_in') say(e); }
+}
+$('accSearchBtn').addEventListener('click', () => { accQuery = $('accSearch').value; loadAccounts(); });
+$('accSearch').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('accSearchBtn').click(); } });
+
 // ── coupons ─────────────────────────────────────────────────────
 let lastCodes = [];
 
@@ -215,11 +335,12 @@ async function loadCoupons() {
 }
 
 // ── activity ────────────────────────────────────────────────────
-const STATUS = { pending: 'Waiting for bot', sent: 'Sent to bot', done: 'Applied', failed: 'Failed', cancelled: 'Cancelled' };
+const STATUS = { pending: 'Waiting for bot', sent: 'Sent to bot', done: 'Applied', failed: 'Failed', cancelled: 'Cancelled', expired: 'Expired' };
+const JOBNAME = { buy: 'Order', m_add: 'Add goods', m_remove: 'Remove', m_close: 'Close', m_open: 'Open', m_topup: 'Top up', m_price: 'Change price', acct_pass: 'Change password', acct_ban: 'Ban / unban', acct_del: 'Delete login' };
 
 async function loadActivity() {
   try {
-    const [a, l] = await Promise.all([api('/admin/api/adjustments'), api('/admin/api/audit')]);
+    const [a, l, jb] = await Promise.all([api('/admin/api/adjustments'), api('/admin/api/audit'), api('/admin/api/jobs')]);
     const ab = $('adjRows'); ab.replaceChildren();
     a.items.forEach(x => {
       const tr = el('tr');
@@ -236,6 +357,13 @@ async function loadActivity() {
       }
       tr.append(td(when(x.createdAt)), td(x.name, 'name'), td(`${verb} ${fmt(x.amount)} ${fname}`), td(st), act);
       ab.append(tr);
+    });
+    const jr = $('jobRows'); jr.replaceChildren();
+    jb.items.forEach(x => {
+      const tr = el('tr');
+      const what = `${JOBNAME[x.type] || x.type}` + (x.msg ? ' — ' + x.msg : (x.ref ? ' #' + x.ref : '') + (x.item ? ' ' + x.item : '') + (x.qty ? ' × ' + fmt(x.qty) : '') + (x.price ? ' @ $' + fmt(x.price) : ''));
+      tr.append(td(when(x.createdAt)), td(x.who || '', 'name'), td(what, 'name'), td((STATUS[x.status] || x.status) + (x.error ? ` (${x.error})` : '')));
+      jr.append(tr);
     });
     const lb = $('auditRows'); lb.replaceChildren();
     l.items.forEach(x => {
