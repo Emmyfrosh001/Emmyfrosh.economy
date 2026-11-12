@@ -32,6 +32,13 @@ function ago(ts) {
   return Math.floor(s / 86400) + ' d ago';
 }
 
+function podTotal(n) {
+  const w = el('span', 'pod-total');
+  w.title = '$' + fmt(n);
+  w.append(el('span', 'm-full', '$' + fmt(n)), el('span', 'm-short', '$' + compact(n)));
+  return w;
+}
+
 async function load() {
   try {
     const [t, s] = await Promise.all([
@@ -68,7 +75,7 @@ async function load() {
     top.slice(0, 3).forEach(u => {
       const d = el('div', 'pod pod-' + u.rank);
       d.append(icon('crown', 'crown pod-crown'),
-        el('span', 'pod-rank', '#' + u.rank), el('span', 'pod-name', u.name), el('span', 'pod-total', '$' + fmt(u.total)));
+        el('span', 'pod-rank', '#' + u.rank), el('span', 'pod-name', u.name), podTotal(u.total));
       podium.append(d);
     });
     podium.hidden = top.length === 0;
@@ -79,7 +86,12 @@ async function load() {
       rk.append(el('span', 'rk ' + (u.rank <= 3 ? 'rk-' + u.rank : 'rk-n'), String(u.rank)));
       const lv = el('td', 'c');
       lv.append(el('span', 'lv' + (u.rank <= 3 ? '' : ' lv-dim'), 'Lv.' + u.level));
-      tr.append(rk, el('td', 'name', u.name), el('td', 'job', u.job), lv, el('td', 'n money', '$' + fmt(u.total)));
+      const nm = el('td', 'name');
+      nm.append(el('span', 'pname', u.name), el('span', 'job-sub', u.job));
+      const mo = el('td', 'n money');
+      mo.title = '$' + fmt(u.total);
+      mo.append(el('span', 'm-full', '$' + fmt(u.total)), el('span', 'm-short', '$' + compact(u.total)));
+      tr.append(rk, nm, el('td', 'job', u.job), lv, mo);
       rows.append(tr);
     });
   } catch {
