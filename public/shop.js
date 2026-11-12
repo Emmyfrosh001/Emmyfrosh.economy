@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#040b1f">
+  <title>Shop &amp; Market</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%9B%92%3C/text%3E%3C/svg%3E">
+</head>
+<body class="public shop">
+
+  <header class="topbar">
+    <div class="wrap topbar-in">
+      <a class="back" href="/" aria-label="Leaderboard">&#8592;</a>
+      <div class="brand"><span>EMMYFROSH-<span class="ai">AI</span></span></div>
+      <span class="grow"></span>
+      <button id="logoutBtn" class="btn small ghost-n" type="button" hidden>Log out</button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <p id="toast" class="s-toast" role="status" hidden></p>
+
+    <!-- LOGIN / SIGN UP -->
+    <section id="loginView" class="s-card login-n" hidden>
+      <div class="s-tabs auth-tabs" role="tablist">
+        <button class="s-tab on" id="authLogin" type="button" role="tab">Log in</button>
+        <button class="s-tab" id="authSignup" type="button" role="tab">Create account</button>
+      </div>
+
+      <form id="loginForm" autocomplete="on">
+        <p class="s-muted">Use your WhatsApp number and your password.</p>
+        <label for="num">WhatsApp number</label>
+        <input id="num" name="username" type="tel" inputmode="tel" autocomplete="username" placeholder="2348012345678" required>
+        <label for="pw">Password</label>
+        <input id="pw" name="password" type="password" autocomplete="current-password" required>
+        <button class="btn-n" type="submit">Log in</button>
+        <p id="loginErr" class="s-err" role="alert" hidden></p>
+        <div class="s-help">
+          <strong>Forgot it, or prefer WhatsApp?</strong>
+          <span>In a <em>private</em> chat with the bot send:</span>
+          <code>.setpass yourpassword</code>
+        </div>
+      </form>
+
+      <form id="signupForm" autocomplete="off" hidden>
+        <p class="s-muted">Pick a password, then confirm your number once in WhatsApp.</p>
+        <label for="sNum">WhatsApp number</label>
+        <input id="sNum" type="tel" inputmode="tel" placeholder="2348012345678" required>
+        <label for="sPw">Password <span class="s-muted small">(6–40 characters, no spaces)</span></label>
+        <input id="sPw" type="password" autocomplete="new-password" minlength="6" maxlength="40" required>
+        <label for="sPw2">Repeat password</label>
+        <input id="sPw2" type="password" autocomplete="new-password" minlength="6" maxlength="40" required>
+        <button class="btn-n" type="submit">Create account</button>
+        <p id="signupErr" class="s-err" role="alert" hidden></p>
+      </form>
+
+      <div id="verifyBox" class="s-help ok" hidden>
+        <strong>Almost done — confirm your number</strong>
+        <span>Open a <em>private</em> chat with the bot on WhatsApp (from the same number) and send:</span>
+        <code id="verifyCode"></code>
+        <span>The code works for <span id="verifyMins">60</span> minutes. After the bot says “verified”, come back and log in (about 30 seconds).</span>
+        <button id="verifyDone" class="btn-n small" type="button">I sent it — go to log in</button>
+      </div>
+
+      <p class="s-muted small">You can still look at the shop below without logging in.</p>
+    </section>
+
+    <!-- ACCOUNT BAR -->
+    <section id="meBar" class="s-card me-bar" hidden>
+      <div><span class="s-muted">Signed in as</span><strong id="meName"></strong></div>
+      <div class="me-money"><span class="s-muted">Wallet</span><strong id="meBal"></strong></div>
+    </section>
+
+    <nav class="s-tabs" role="tablist" aria-label="Sections">
+      <button class="s-tab on" data-tab="shop" type="button" role="tab">Shop</button>
+      <button class="s-tab" data-tab="market" type="button" role="tab">Market</button>
+      <button class="s-tab" data-tab="rates" type="button" role="tab">Rates</button>
+      <button class="s-tab" data-tab="orders" type="button" role="tab" id="ordersTab" hidden>My orders</button>
+    </nav>
+
+    <div class="s-search"><input id="q" type="search" placeholder="Search items" aria-label="Search items"></div>
+
+    <section id="tab-shop" class="s-panel">
+      <div id="shopGrid" class="s-grid"></div>
+      <p id="shopEmpty" class="s-empty" hidden>Nothing here yet. The bot sends the shop every 30 seconds.</p>
+    </section>
+
+    <section id="tab-market" class="s-panel" hidden>
+      <div id="marketGrid" class="s-grid"></div>
+      <p id="marketEmpty" class="s-empty" hidden>No listings right now.</p>
+    </section>
+
+    <section id="tab-rates" class="s-panel" hidden>
+      <p class="s-muted small">Live coin rates (they move a little every 10 minutes) and the cheapest seller on the market right now.</p>
+      <div id="rateList" class="rate-list"></div>
+      <p id="ratesEmpty" class="s-empty" hidden>No rates yet. The bot sends them every 30 seconds.</p>
+    </section>
+
+    <section id="tab-orders" class="s-panel" hidden>
+      <div id="orderList" class="order-list"></div>
+      <p id="ordersEmpty" class="s-empty" hidden>No orders yet.</p>
+    </section>
+
+    <p class="s-muted small center" id="updated"></p>
+  </main>
+
+  <!-- BUY DIALOG -->
+  <div id="buyModal" class="modal" hidden>
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="buyTitle">
+      <h2 id="buyTitle"></h2>
+      <p id="buyInfo" class="s-muted"></p>
+      <label for="buyQty">Quantity</label>
+      <input id="buyQty" type="number" min="1" step="1" value="1" inputmode="numeric">
+      <p class="buy-total">Total: <strong id="buyTotal"></strong></p>
+      <p id="buyStatus" class="s-status" hidden></p>
+      <div class="modal-actions">
+        <button id="buyCancel" class="btn-n ghost-n" type="button">Close</button>
+        <button id="buyGo" class="btn-n" type="button">Buy now</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/shop.js"></script>
+</body>
+</html>
