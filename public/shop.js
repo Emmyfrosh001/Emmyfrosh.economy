@@ -20,7 +20,7 @@ const ERR = {
   bot_offline: 'The bot did not answer in time. You were not charged. Try again.',
   banned: 'This account has been banned.',
   not_verified: 'Almost there: confirm your number first. Send the .verify code to the bot on WhatsApp.',
-  exists: 'This number already has an account. Log in instead.',
+  exists: 'This number already has an account. Log in instead. Forgot the password? Chat with customer care.',
   bad_number: 'Enter your full WhatsApp number with country code.',
   bad_password: 'Password must be 6–40 characters with no spaces.',
   busy: 'The site is busy. Try again in a few minutes.',
@@ -29,6 +29,11 @@ const ERR = {
 };
 
 let state = null, tab = 'shop', timer = null;
+
+// 💬 customer care: the round chat bubble (chat.js) opens with a ready-made message
+function askCare(text) { if (window.openSupportChat) window.openSupportChat(text); }
+$('forgotChat').addEventListener('click', () => askCare('I forgot my website password. My WhatsApp number is: '));
+$('signupHelp').addEventListener('click', () => askCare('I already have an account but forgot my password. My WhatsApp number is: '));
 
 async function api(path, method, body) {
   const opt = { method: method || 'GET', headers: {} };
