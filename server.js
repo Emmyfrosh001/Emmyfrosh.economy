@@ -53,6 +53,7 @@ for (const k of ['coupons', 'users', 'accounts', 'balances', 'signups', 'logins'
 if (!db.market || typeof db.market !== 'object') db.market = { shop: [], coins: [], listings: [], updatedAt: 0 };
 for (const k of ['shop', 'coins', 'listings']) if (!Array.isArray(db.market[k])) db.market[k] = [];
 for (const k of ['adjustments', 'audit', 'jobs']) if (!Array.isArray(db[k])) db[k] = [];
+if (!db.chats || typeof db.chats !== 'object') db.chats = {};   // live chat: visitors <-> customer care
 
 function save() {
   const tmp = DB_FILE + '.tmp';
@@ -116,6 +117,7 @@ setInterval(() => {
   for (const [k, v] of buckets) if (!v.some(t => now - t < 3600000)) buckets.delete(k);
   for (const [k, s] of sessions) if (s.exp < now) sessions.delete(k);
   for (const [k, s] of usessions) if (s.exp < now) usessions.delete(k);
+  for (const [k, c] of Object.entries(db.chats)) if (now - c.updatedAt > 30 * 86400000) delete db.chats[k];
 }, 120000).unref();
 
 function httpError(status, msg) { const e = new Error(msg); e.status = status; return e; }
@@ -217,6 +219,11 @@ function hashPassAsync(pw) {
     crypto.scrypt(String(pw), salt, 64, (err, key) => err ? reject(err) : resolve(`s1$${salt}$${key.toString('hex')}`));
   });
 }
+const keyOf = (token) => crypto.createHash('sha256').update('chat:' + String(token)).digest('hex').slice(0, 24);
+function chatKey(req) {
+  const t = parseCookies(req).cid;
+  return t && /^[A-Za-z0-9_-]{20,64}$/.test(t) ? keyOf(t) : null;
+}
 function killSessions(number) { for (const [k, v] of usessions) if (v.user === number) usessions.delete(k); }
 const CODE_ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 function newVerifyCode() {
@@ -307,8 +314,8 @@ async function route(req, res) {
       const str = (v, n) => String(v ?? '').slice(0, n);
       const int = (v) => { v = Math.floor(Number(v)); return Number.isFinite(v) && v >= 0 ? Math.min(v, 1e15) : 0; };
       db.market = {
-        shop: (Array.isArray(body.shop) ? body.shop : []).slice(0, 400).map(x => ({ key: str(x.key, 40), name: str(x.name, 60), price: int(x.price), out: !!x.out })),
-        coins: (Array.isArray(body.coins) ? body.coins : []).slice(0, 100).map(x => ({ key: str(x.key, 40), name: str(x.name, 60), price: int(x.price) })),
+        shop: (Array.isArray(body.shop) ? body.shop : []).slice(0, 400).map(x => ({ key: str(x.key, 40), name: str(x.name, 60), price: int(x.price), out: !!x.out, custom: !!x.custom })),
+        coins: (Array.isArray(body.coins) ? body.coins : []).slice(0, 100).map(x => ({ key: str(x.key, 40), name: str(x.name, 60), price: int(x.price), custom: !!x.custom })),
         listings: (Array.isArray(body.listings) ? body.listings : []).slice(0, 1500).map(x => ({
           id: str(x.id, 20), item: str(x.item, 40), name: str(x.name, 60), qty: int(x.qty), price: int(x.price),
           seller: str(x.seller, 40), kind: ['admin', 'bot', 'player'].includes(x.kind) ? x.kind : 'player',
@@ -355,7 +362,8 @@ async function route(req, res) {
       if (!sg) return send(res, 200, { ok: false, error: 'invalid_code' });
       if (Date.now() - sg.createdAt > SIGNUP_TTL) { delete db.signups[code]; save(); return send(res, 200, { ok: false, error: 'code_expired' }); }
       const who = last10(body.number);
-      if (who && who !== sg.number) return send(res, 200, { ok: false, error: 'number_mismatch', number: sg.number });
+      // the bot must tell us which WhatsApp number sent the code, and it must be the number that signed up
+      if (!who || who !== sg.number) return send(res, 200, { ok: false, error: 'number_mismatch' });
       return send(res, 200, { ok: true, number: sg.number, hash: sg.hash });
     }
 
@@ -376,8 +384,8 @@ async function route(req, res) {
         const redeliver = a.status === 'sent' && now - (a.sentAt || 0) > JOB_TTL;
         if (a.status === 'pending' || redeliver) {
           a.status = 'sent'; a.sentAt = now;
-          const { id, type, kind, ref, qty, item, price, sellerName, minutes, hash, banned } = a;
-          jobs.push({ id, type, user: a.user, kind, ref, qty, item, price, sellerName, minutes, hash, banned });
+          const { id, type, kind, ref, qty, item, price, sellerName, minutes, hash, banned, key, name } = a;
+          jobs.push({ id, type, user: a.user, kind, ref, qty, item, price, sellerName, minutes, hash, banned, key, name });
         }
       }
       if (jobs.length) save();
@@ -427,6 +435,52 @@ async function route(req, res) {
       ok: true, siteName: SITE_NAME, players: us.length,
       totalMoney: us.reduce((s, u) => s + total(u), 0), updatedAt: db.usersUpdatedAt
     });
+  }
+
+  // ─────────── live chat (no login needed) ───────────
+  // A visitor gets a random secret cookie ("cid"); their chat is stored under a hash of it.
+  if (p === '/chat/api/messages' && req.method === 'GET') {
+    if (hit('chatpoll', ip, 150, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
+    const key = chatKey(req);
+    const c = key && db.chats[key];
+    if (!c) return send(res, 200, { ok: true, messages: [], unread: 0 });
+    const unread = c.unreadUser || 0;
+    if (url.searchParams.get('open') === '1' && unread) { c.unreadUser = 0; save(); }
+    return send(res, 200, { ok: true, messages: c.messages.slice(-100).map(m => ({ from: m.from, text: m.text, at: m.at })), unread, name: c.name });
+  }
+
+  if (p === '/chat/api/send' && req.method === 'POST') {
+    if (req.headers['x-requested-with'] !== 'XMLHttpRequest') return send(res, 403, { ok: false, error: 'bad_request' });
+    if (hit('chatip', ip, 30, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
+    const body = await readBody(req, 4000);
+    const text = String(body.text || '').replace(/\r/g, '').trim().slice(0, 500);
+    if (!text) return send(res, 400, { ok: false, error: 'empty' });
+    let token = parseCookies(req).cid, extra = {};
+    if (!token || !/^[A-Za-z0-9_-]{20,64}$/.test(token)) {
+      token = crypto.randomBytes(24).toString('base64url');
+      extra = { 'Set-Cookie': cookieHeader(req, token, 30 * 86400, 'cid') };
+    }
+    const key = keyOf(token);
+    if (hit('chatc', key, 12, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
+    let c = db.chats[key];
+    if (!c) {
+      if (Object.keys(db.chats).length >= 3000) return send(res, 503, { ok: false, error: 'busy' });
+      c = db.chats[key] = { id: key, name: 'Visitor', number: '', createdAt: Date.now(), updatedAt: Date.now(), unreadAdmin: 0, unreadUser: 0, messages: [] };
+    }
+    // logged-in players are identified by the server (never trust the browser for this)
+    const us = getSession(req, 'usid', usessions);
+    const acc = us ? db.accounts[us.user] : null;
+    if (acc) { c.name = String((db.balances[acc.jid] && db.balances[acc.jid].name) || acc.name || 'Player').slice(0, 30); c.number = acc.number; }
+    else {
+      const nm = String(body.name || '').replace(/\s+/g, ' ').trim().slice(0, 30);
+      if (nm) c.name = nm;
+    }
+    c.messages.push({ from: 'user', text, at: Date.now() });
+    if (c.messages.length > 300) c.messages.splice(0, c.messages.length - 300);
+    c.unreadAdmin = (c.unreadAdmin || 0) + 1;
+    c.updatedAt = Date.now();
+    save();
+    return send(res, 200, { ok: true }, extra);
   }
 
   // ─────────── players: login + shop ───────────
@@ -701,6 +755,50 @@ async function route(req, res) {
       return send(res, 200, { ok: true });
     }
 
+    // ── create / re-price / remove goods & coins (the bot applies them) ──
+    if (p === '/admin/api/item/add' && req.method === 'POST') {
+      const b = await readBody(req);
+      const kind = b.kind === 'coin' ? 'coin' : 'good';
+      const key = String(b.key || '').trim().toLowerCase();
+      const name = String(b.name || '').trim().slice(0, 40);
+      const price = parseAmount(b.price);
+      if (!/^[a-z0-9_]{2,24}$/.test(key)) return send(res, 400, { ok: false, error: 'bad_id' });
+      if (!name) return send(res, 400, { ok: false, error: 'bad_name' });
+      if (!Number.isFinite(price) || price < 1 || price > 1e15) return send(res, 400, { ok: false, error: 'bad_price' });
+      const inShop = db.market.shop.find(x => x.key === key), inCoins = db.market.coins.find(x => x.key === key);
+      if (kind === 'good' ? !!inCoins : !!inShop) return send(res, 400, { ok: false, error: 'id_taken' });
+      const ex = kind === 'good' ? inShop : inCoins;
+      if (ex && !ex.custom) return send(res, 400, { ok: false, error: 'id_builtin' });
+      newJob({ type: 'item_add', kind, key, name, price, by: me });
+      addAudit(me, 'item_add', `${kind} ${key} "${name}" @ ${price}`);
+      save();
+      return send(res, 200, { ok: true });
+    }
+
+    if (p === '/admin/api/item/price' && req.method === 'POST') {
+      const b = await readBody(req);
+      const key = String(b.key || '').toLowerCase();
+      const price = parseAmount(b.price);
+      if (!db.market.shop.some(x => x.key === key) && !db.market.coins.some(x => x.key === key)) return send(res, 404, { ok: false, error: 'bad_item' });
+      if (!Number.isFinite(price) || price < 1 || price > 1e15) return send(res, 400, { ok: false, error: 'bad_price' });
+      newJob({ type: 'item_price', key, price, by: me });
+      addAudit(me, 'item_price', `${key} → ${price}`);
+      save();
+      return send(res, 200, { ok: true });
+    }
+
+    if (p === '/admin/api/item/delete' && req.method === 'POST') {
+      const b = await readBody(req);
+      const key = String(b.key || '').toLowerCase();
+      const it = db.market.shop.find(x => x.key === key) || db.market.coins.find(x => x.key === key);
+      if (!it) return send(res, 404, { ok: false, error: 'bad_item' });
+      if (!it.custom) return send(res, 400, { ok: false, error: 'not_custom' });
+      newJob({ type: 'item_del', key, by: me });
+      addAudit(me, 'item_delete', key);
+      save();
+      return send(res, 200, { ok: true });
+    }
+
     if (p === '/admin/api/market/op' && req.method === 'POST') {
       const b = await readBody(req);
       const op = String(b.op || '');
@@ -715,6 +813,46 @@ async function route(req, res) {
       else return send(res, 400, { ok: false, error: 'bad_op' });
       newJob(job);
       addAudit(me, 'market_' + op, `#${ref} ${l.name}` + (job.qty ? ` +${job.qty}` : '') + (job.price ? ` → ${job.price}` : '') + (job.minutes ? ` ${job.minutes}min` : ''));
+      save();
+      return send(res, 200, { ok: true });
+    }
+
+    // ── live chat inbox ──
+    if (p === '/admin/api/chats' && req.method === 'GET') {
+      const items = Object.values(db.chats).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 200).map(c => {
+        const last = c.messages[c.messages.length - 1] || {};
+        return { id: c.id, name: c.name, number: c.number || '', unread: c.unreadAdmin || 0, updatedAt: c.updatedAt, last: String(last.text || '').slice(0, 80), lastFrom: last.from || '' };
+      });
+      return send(res, 200, { ok: true, items, unread: items.reduce((n, c) => n + (c.unread ? 1 : 0), 0) });
+    }
+
+    if (p === '/admin/api/chats/messages' && req.method === 'GET') {
+      const c = db.chats[String(url.searchParams.get('id') || '')];
+      if (!c) return send(res, 404, { ok: false, error: 'chat_not_found' });
+      if (c.unreadAdmin) { c.unreadAdmin = 0; save(); }
+      return send(res, 200, { ok: true, id: c.id, name: c.name, number: c.number || '', messages: c.messages.slice(-200) });
+    }
+
+    if (p === '/admin/api/chats/reply' && req.method === 'POST') {
+      const b = await readBody(req, 4000);
+      const c = db.chats[String(b.id || '')];
+      if (!c) return send(res, 404, { ok: false, error: 'chat_not_found' });
+      const text = String(b.text || '').replace(/\r/g, '').trim().slice(0, 1000);
+      if (!text) return send(res, 400, { ok: false, error: 'empty' });
+      c.messages.push({ from: 'admin', text, at: Date.now() });
+      if (c.messages.length > 300) c.messages.splice(0, c.messages.length - 300);
+      c.unreadUser = (c.unreadUser || 0) + 1;
+      c.unreadAdmin = 0;
+      c.updatedAt = Date.now();
+      save();
+      return send(res, 200, { ok: true });
+    }
+
+    if (p === '/admin/api/chats/delete' && req.method === 'POST') {
+      const b = await readBody(req);
+      if (!db.chats[String(b.id || '')]) return send(res, 404, { ok: false, error: 'chat_not_found' });
+      delete db.chats[String(b.id)];
+      addAudit(me, 'chat_delete', String(b.id));
       save();
       return send(res, 200, { ok: true });
     }
@@ -762,7 +900,7 @@ async function route(req, res) {
     if (p === '/admin/api/jobs') {
       return send(res, 200, { ok: true, items: db.jobs.slice(0, 80).map(a => ({
         id: a.id, type: a.type, status: a.status, createdAt: a.createdAt, doneAt: a.doneAt || 0,
-        who: a.userName || a.by || '', ref: a.ref, item: a.item, qty: a.qty, price: a.price,
+        who: a.userName || a.by || '', ref: a.ref, item: a.item || a.key, qty: a.qty, price: a.price,
         error: a.error || '', msg: a.msg || ''
       })) });
     }
