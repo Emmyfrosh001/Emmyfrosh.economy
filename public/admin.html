@@ -31,6 +31,8 @@
         <nav class="tabs" role="tablist" aria-label="Sections">
           <button class="tab on" data-tab="overview" role="tab">Overview</button>
           <button class="tab" data-tab="players" role="tab">Players</button>
+          <button class="tab" data-tab="market" role="tab">Market</button>
+          <button class="tab" data-tab="accounts" role="tab">Accounts</button>
           <button class="tab" data-tab="coupons" role="tab">Coupons</button>
           <button class="tab" data-tab="activity" role="tab">Activity</button>
         </nav>
@@ -94,6 +96,46 @@
         </div>
       </section>
 
+      <!-- market -->
+      <section id="tab-market" class="panel" hidden>
+        <h2>Market</h2>
+        <p class="hint" id="marketNote">Changes are applied by the bot within about 10 seconds.</p>
+        <h3>Add goods</h3>
+        <form id="mAddForm" class="inline-form market-form" autocomplete="off">
+          <div><label for="mItem">Item</label><select id="mItem" required></select></div>
+          <div><label for="mQty">Quantity</label><input id="mQty" type="text" inputmode="text" placeholder="10, 1k" required></div>
+          <div><label for="mPrice">Price each</label><input id="mPrice" type="text" inputmode="text" placeholder="5000, 2.5m" required></div>
+          <div><label for="mSeller">Seller name</label><input id="mSeller" type="text" maxlength="30" value="Official Store"></div>
+          <button type="submit" class="btn primary">Add to market</button>
+        </form>
+        <h3>All listings</h3>
+        <div class="row"><input id="mSearch" type="search" placeholder="Search listings" aria-label="Search listings"></div>
+        <div class="table-scroll">
+          <table class="board">
+            <thead><tr><th>ID</th><th>Item</th><th class="n">Left</th><th class="n">Price each</th><th>Seller</th><th>Status</th><th></th></tr></thead>
+            <tbody id="mRows"></tbody>
+          </table>
+        </div>
+        <p class="empty" id="mEmpty" hidden>No listings yet. Wait for the bot's next update, or add goods above.</p>
+      </section>
+
+      <!-- accounts -->
+      <section id="tab-accounts" class="panel" hidden>
+        <h2>Website accounts</h2>
+        <p class="hint" id="accNote">Players who can log in on the shop page. Changes are applied by the bot within about 10 seconds.</p>
+        <div class="row">
+          <input id="accSearch" type="search" placeholder="Search by name or number" aria-label="Search accounts">
+          <button id="accSearchBtn" class="btn">Search</button>
+        </div>
+        <div class="table-scroll">
+          <table class="board">
+            <thead><tr><th>Player</th><th>Number</th><th class="n">Wallet</th><th>Last login</th><th>Status</th><th></th></tr></thead>
+            <tbody id="accRows"></tbody>
+          </table>
+        </div>
+        <p class="empty" id="accEmpty" hidden>No accounts yet.</p>
+      </section>
+
       <!-- coupons -->
       <section id="tab-coupons" class="panel" hidden>
         <h2>Coupons</h2>
@@ -128,6 +170,13 @@
           <table class="board">
             <thead><tr><th>When</th><th>Player</th><th>Change</th><th>Status</th><th></th></tr></thead>
             <tbody id="adjRows"></tbody>
+          </table>
+        </div>
+        <h2>Market &amp; shop orders</h2>
+        <div class="table-scroll">
+          <table class="board">
+            <thead><tr><th>When</th><th>Who / by</th><th>What</th><th>Status</th></tr></thead>
+            <tbody id="jobRows"></tbody>
           </table>
         </div>
         <h2>Admin log</h2>
