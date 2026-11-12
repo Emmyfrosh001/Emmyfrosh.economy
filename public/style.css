@@ -353,3 +353,67 @@ body.public {
   .foot-row { gap: 8px; }
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+/* ================================================================
+   COMPACT / PHONE FIX — smaller sizes, no letter-by-letter wrapping
+   ================================================================ */
+.job-sub, .m-short { display: none; }
+.pname { display: block; }
+
+@media (max-width: 700px) {
+  body.public { font-size: 14px; }
+  .wrap { padding: 0 12px; }
+  .topbar-in { height: 52px; gap: 8px; }
+  .menu-btn { width: 38px; height: 38px; font-size: 1.5rem; }
+  .brand { font-size: 1.15rem; gap: 8px; }
+  .brand .ic { font-size: 1.7rem; }
+
+  .public .hero { padding: 16px 0 0; }
+  .pill { font-size: .72rem; padding: 4px 12px 4px 9px; }
+  .public .hero h1 { font-size: clamp(1.5rem, 7vw, 2rem); margin: 12px 0 8px; }
+  .meta { margin-top: 12px; gap: 8px; }
+  .meta .ic { font-size: 1.5rem; }
+  .public .sub { font-size: .8rem; }
+  .gift { width: clamp(86px, 24vw, 130px); }
+
+  .public .podium { margin: 30px 0 16px; gap: 8px; }
+  .public .pod { padding: 22px 4px 12px; border-radius: 14px; }
+  .public .pod-rank { font-size: .85rem; padding: 0 12px; }
+  .public .pod-name { font-size: .8rem; }
+  .public .pod-total { font-size: .72rem; }
+
+  .tiles { gap: 8px; margin-bottom: 16px; }
+  .tile { padding: 10px 8px; border-radius: 14px; gap: 8px; }
+  .tile .ic { font-size: 1.9rem; }
+  .tile-k { font-size: .72rem; }
+  .tile-v { font-size: 1.15rem; }
+
+  .board-card { border-radius: 16px; }
+  .board-head { padding: 10px 12px; gap: 8px; }
+  .public .board-head h2 { font-size: 1.1rem; }
+  .board-head .trophy { font-size: 1.6rem; }
+  .board-head .bars { font-size: 1.3rem; }
+
+  /* leaderboard table: fits the screen, nothing cut off */
+  .public .table-scroll { overflow-x: hidden; }
+  .public .board { font-size: .8rem; table-layout: auto; }
+  .public .board th, .public .board td { padding: 8px 4px; }
+  .public .board th { font-size: .72rem; }
+  .public .board th.job, .public .board td.job, .public .board th:nth-child(3) { display: none; }
+  .public .board .name { width: 100%; min-width: 0; }
+  .pname { font-weight: 700; line-height: 1.2; }
+  .job-sub { display: block; font-size: .68rem; color: #a9c1ee; font-weight: 500; line-height: 1.2; margin-top: 1px; }
+  .m-full { display: none; }
+  .m-short { display: inline; }
+  .public .board .money { white-space: nowrap; }
+  .rk { width: 22px; height: 22px; font-size: .7rem; }
+  .lv { padding: 1px 6px; font-size: .68rem; }
+  .public .board .r { width: 2rem; }
+
+  .redeem { margin-top: 16px; padding: 12px; gap: 10px; border-radius: 14px; }
+  .redeem > .ic { font-size: 2.2rem; }
+  .public .redeem h2 { font-size: .95rem; }
+  .public .redeem p { font-size: .78rem; }
+  .foot { margin-top: 22px; padding: 14px 12px 20px; }
+  .foot-name { font-size: 1.2rem; }
+  .foot-tag { font-size: .7rem; }
+}
