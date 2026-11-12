@@ -32,6 +32,7 @@
           <button class="tab on" data-tab="overview" role="tab">Overview</button>
           <button class="tab" data-tab="players" role="tab">Players</button>
           <button class="tab" data-tab="market" role="tab">Market</button>
+          <button class="tab" data-tab="chats" role="tab">Chats<span class="tab-badge" id="chatBadge" hidden></span></button>
           <button class="tab" data-tab="accounts" role="tab">Accounts</button>
           <button class="tab" data-tab="coupons" role="tab">Coupons</button>
           <button class="tab" data-tab="activity" role="tab">Activity</button>
@@ -100,6 +101,25 @@
       <section id="tab-market" class="panel" hidden>
         <h2>Market</h2>
         <p class="hint" id="marketNote">Changes are applied by the bot within about 10 seconds.</p>
+        <h3>Create new goods &amp; coins</h3>
+        <p class="hint">Make something brand new for the shop and market. Goods are sold in the shop; coins trade on the market only. The bot creates it within about 10 seconds.</p>
+        <form id="itemForm" class="inline-form market-form" autocomplete="off">
+          <div><label for="iKind">Type</label>
+            <select id="iKind"><option value="good">Good (shop item)</option><option value="coin">Coin</option></select></div>
+          <div><label for="iKey">ID (no spaces)</label><input id="iKey" type="text" maxlength="24" placeholder="phone" pattern="[A-Za-z0-9_]{2,24}" required></div>
+          <div><label for="iName">Name (emoji ok)</label><input id="iName" type="text" maxlength="40" placeholder="📱 Smart Phone" required></div>
+          <div><label for="iPrice" id="iPriceLbl">Price</label><input id="iPrice" type="text" inputmode="text" placeholder="50k, 2.5m" required></div>
+          <button type="submit" class="btn primary">Create</button>
+        </form>
+        <h3>Goods &amp; coins</h3>
+        <div class="row"><input id="iSearch" type="search" placeholder="Search goods and coins" aria-label="Search goods and coins"></div>
+        <div class="table-scroll">
+          <table class="board">
+            <thead><tr><th>ID</th><th>Name</th><th>Type</th><th class="n">Price / rate</th><th></th></tr></thead>
+            <tbody id="iRows"></tbody>
+          </table>
+        </div>
+
         <h3>Add goods</h3>
         <form id="mAddForm" class="inline-form market-form" autocomplete="off">
           <div><label for="mItem">Item</label><select id="mItem" required></select></div>
@@ -117,6 +137,24 @@
           </table>
         </div>
         <p class="empty" id="mEmpty" hidden>No listings yet. Wait for the bot's next update, or add goods above.</p>
+      </section>
+
+      <!-- chats -->
+      <section id="tab-chats" class="panel" hidden>
+        <h2>Customer chat</h2>
+        <p class="hint">Visitors write to you from the round chat bubble on the website — they do not need to log in. If someone forgot a password, ask for their number, then reset it in the Accounts tab.</p>
+        <div class="chat-wrap">
+          <div class="chat-list" id="chatList"></div>
+          <div class="chat-box" id="chatBox" hidden>
+            <div class="chat-top"><strong id="chatWho"></strong><button id="chatDel" class="btn small danger" type="button">Delete chat</button></div>
+            <div class="chat-msgs" id="chatMsgs"></div>
+            <form id="chatForm" class="chat-form" autocomplete="off">
+              <textarea id="chatText" maxlength="1000" placeholder="Type your reply…" aria-label="Reply" required></textarea>
+              <button class="btn primary" type="submit">Send</button>
+            </form>
+          </div>
+          <p class="empty" id="chatEmpty" hidden>No chats yet. They appear here when a visitor writes to you.</p>
+        </div>
       </section>
 
       <!-- accounts -->
