@@ -38,9 +38,9 @@
         <button class="btn-n" type="submit">Log in</button>
         <p id="loginErr" class="s-err" role="alert" hidden></p>
         <div class="s-help">
-          <strong>Forgot it, or prefer WhatsApp?</strong>
-          <span>In a <em>private</em> chat with the bot send:</span>
-          <code>.setpass yourpassword</code>
+          <strong>Forgot your password?</strong>
+          <span>For safety, passwords can't be reset on the site or in the bot. Tap the button (or the round chat bubble) to chat with customer care — no login needed — and they will reset it for you.</span>
+          <button class="btn-n small" id="forgotChat" type="button">💬 Chat with customer care</button>
         </div>
       </form>
 
@@ -54,6 +54,7 @@
         <input id="sPw2" type="password" autocomplete="new-password" minlength="6" maxlength="40" required>
         <button class="btn-n" type="submit">Create account</button>
         <p id="signupErr" class="s-err" role="alert" hidden></p>
+        <p class="s-muted small">Already made an account and forgot the password? <button id="signupHelp" class="s-link" type="button">Chat with customer care</button></p>
       </form>
 
       <div id="verifyBox" class="s-help ok" hidden>
@@ -123,5 +124,6 @@
   </div>
 
   <script src="/shop.js"></script>
+  <script src="/chat.js"></script>
 </body>
 </html>
