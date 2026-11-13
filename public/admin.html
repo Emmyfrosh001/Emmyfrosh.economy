@@ -34,6 +34,7 @@
           <button class="tab" data-tab="market" role="tab">Market</button>
           <button class="tab" data-tab="chats" role="tab">Chats<span class="tab-badge" id="chatBadge" hidden></span></button>
           <button class="tab" data-tab="accounts" role="tab">Accounts</button>
+          <button class="tab" data-tab="game" role="tab">Game</button>
           <button class="tab" data-tab="coupons" role="tab">Coupons</button>
           <button class="tab" data-tab="activity" role="tab">Activity</button>
         </nav>
@@ -172,6 +173,38 @@
           </table>
         </div>
         <p class="empty" id="accEmpty" hidden>No accounts yet.</p>
+      </section>
+
+      <!-- game -->
+      <section id="tab-game" class="panel" hidden>
+        <h2>Crash plane game</h2>
+        <p class="hint">Players bet with the money in their own wallet. When the wallet is empty they cannot play. A new difficulty starts with the next round.</p>
+        <div class="stats" id="gStats"></div>
+
+        <h3>Settings</h3>
+        <form id="gameForm" class="editor" autocomplete="off">
+          <label for="gDiff">Difficulty</label>
+          <select id="gDiff"></select>
+          <p class="hint" id="gDiffNote"></p>
+          <label for="gOn">Game</label>
+          <select id="gOn"><option value="1">On — players can bet</option><option value="0">Off — closed for new bets</option></select>
+          <label for="gMin">Smallest stake</label>
+          <input id="gMin" type="text" inputmode="text" placeholder="1, 100, 1k">
+          <label for="gMax">Biggest stake (empty = no limit)</label>
+          <input id="gMax" type="text" inputmode="text" placeholder="no limit, 50k, 1m">
+          <button type="submit" class="btn primary">Save settings</button>
+        </form>
+
+        <h3>Waiting to settle with the bot</h3>
+        <p class="hint">Stakes and wins are sent to the bot as one combined change per player. A negative number is money the bot still has to take from that wallet.</p>
+        <div class="table-scroll">
+          <table class="board">
+            <thead><tr><th>Player</th><th class="n">Change</th><th>Status</th></tr></thead>
+            <tbody id="gWait"></tbody>
+          </table>
+        </div>
+        <p class="empty" id="gWaitEmpty" hidden>Nothing waiting. Everything is settled.</p>
+        <p><button id="gReset" class="btn small ghost" type="button">Reset totals</button></p>
       </section>
 
       <!-- coupons -->
