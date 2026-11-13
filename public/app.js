@@ -113,3 +113,14 @@ navMenu.addEventListener('click', (e) => {
 
 load();
 setInterval(load, 60000);
+
+// already logged in? show "My wallet" instead of Log in / Sign up
+(async () => {
+  try {
+    const r = await fetch('/shop/api/state');
+    const j = await r.json();
+    if (!j.me) return;
+    ['hdLogin', 'hdSignup', 'mnLogin', 'mnSignup'].forEach(id => { document.getElementById(id).hidden = true; });
+    ['hdWallet', 'mnWallet'].forEach(id => { document.getElementById(id).hidden = false; });
+  } catch {}
+})();
