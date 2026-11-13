@@ -618,3 +618,13 @@ a.btn-n { display: inline-block; text-decoration: none; text-align: center; }
 /* tabs wrap onto a second row instead of being cut off (3 per row) */
 .s-tabs { flex-wrap: wrap; overflow: visible; }
 .s-tab { flex: 1 1 calc(33% - 8px); min-width: 0; padding-left: 8px; padding-right: 8px; }
+
+/* games tab: a picture card that opens the game */
+.game-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.game-card { display: grid; gap: 8px; padding: 12px; border-radius: 18px; border: 1.5px solid var(--n-line); background: var(--n-card); box-shadow: var(--n-glow); color: #fff; text-decoration: none; }
+.game-card:hover { filter: brightness(1.1); }
+.game-pic { display: grid; place-items: center; height: 150px; border-radius: 12px; background: radial-gradient(circle at 20% 90%, #2a1747, #0b0d17 70%); overflow: hidden; }
+.game-pic img { width: 70%; max-width: 220px; height: auto; }
+.game-name { font-weight: 900; font-size: 1.15rem; }
+.game-sub { color: #9db4e6; font-size: .88rem; }
+.game-play { justify-self: start; font-weight: 800; padding: 8px 18px; border-radius: 10px; color: #04123a; background: linear-gradient(#5ff0ff, #2ea8ff); box-shadow: 0 0 14px rgba(46, 200, 255, .5); }
