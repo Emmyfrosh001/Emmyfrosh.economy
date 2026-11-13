@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 120" width="240" height="120">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ff6a7d"/>
+      <stop offset=".45" stop-color="#e5163c"/>
+      <stop offset="1" stop-color="#9c0b29"/>
+    </linearGradient>
+    <linearGradient id="wing" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f23556"/>
+      <stop offset="1" stop-color="#a30d2c"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e9f8ff"/>
+      <stop offset="1" stop-color="#7cc4ec"/>
+    </linearGradient>
+  </defs>
+
+  <!-- far wing (behind the body) -->
+  <path d="M96 52 L124 24 Q128 20 134 22 L146 26 Q150 28 146 33 L122 62 Z" fill="#8a0a25"/>
+
+  <!-- tail fin -->
+  <path d="M34 62 L14 22 Q12 17 18 17 L42 19 Q52 40 64 54 Z" fill="url(#wing)"/>
+  <!-- tail plane -->
+  <path d="M30 70 L6 80 Q1 82 6 85 L46 84 Z" fill="#b10e2e"/>
+
+  <!-- fuselage -->
+  <path d="M20 66 C42 46 104 38 160 44 C190 47 208 56 212 66 C208 78 190 86 160 88 C104 92 44 86 20 72 Z" fill="url(#body)"/>
+  <!-- belly shade + stripe -->
+  <path d="M26 74 C60 84 120 90 170 87 C192 85 206 80 211 70 C190 80 140 82 100 80 C64 78 40 76 26 74 Z" fill="#7a0a22" opacity=".55"/>
+  <path d="M40 62 C80 52 130 50 196 58" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" opacity=".85"/>
+
+  <!-- cockpit -->
+  <path d="M108 49 C114 34 138 32 154 44 L154 52 L108 55 Z" fill="url(#glass)" stroke="#7a0a22" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M122 38 L120 53" stroke="#7a0a22" stroke-width="2" opacity=".6"/>
+
+  <!-- engine cowling + spinner -->
+  <path d="M206 50 Q220 52 220 66 Q220 80 206 82 Z" fill="#6f0a20"/>
+  <path d="M206 54 Q214 56 214 66 Q214 76 206 78" fill="none" stroke="#ff8b9b" stroke-width="2" opacity=".6"/>
+  <ellipse cx="222" cy="66" rx="7" ry="8" fill="#d9dde3"/>
+  <ellipse cx="224" cy="64" rx="3" ry="3.5" fill="#fff" opacity=".8"/>
+
+  <!-- near wing -->
+  <path d="M86 70 L66 108 Q63 114 71 114 L128 112 Q140 110 148 76 Z" fill="url(#wing)"/>
+  <path d="M92 72 L76 106" stroke="#ff8b9b" stroke-width="2.5" stroke-linecap="round" opacity=".6"/>
+
+  <!-- landing gear -->
+  <path d="M150 88 L156 104" stroke="#2a2d34" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="157" cy="108" r="9" fill="#23252b"/>
+  <circle cx="157" cy="108" r="3.6" fill="#9aa0aa"/>
+</svg>
