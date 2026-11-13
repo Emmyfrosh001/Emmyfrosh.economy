@@ -55,6 +55,7 @@ for (const k of ['shop', 'coins', 'listings']) if (!Array.isArray(db.market[k]))
 for (const k of ['adjustments', 'audit', 'jobs']) if (!Array.isArray(db[k])) db[k] = [];
 if (!db.chats || typeof db.chats !== 'object') db.chats = {};   // live chat: visitors <-> customer care
 if (!Array.isArray(db.transfers)) db.transfers = [];            // player -> player money transfers made on the site
+if (!Array.isArray(db.gameAdj)) db.gameAdj = [];                // crash-plane wallet settlements waiting for the bot
 
 function save() {
   const tmp = DB_FILE + '.tmp';
@@ -282,6 +283,29 @@ function queueAdj(user, name, op, amount, t, leg, field) {
   });
   if (db.adjustments.length > 1000) db.adjustments.length = 1000;
 }
+// crash-plane: the game sends ONE net add/remove per player to the bot (same pending/ack road as every other money edit)
+function queueGameAdj(jid, name, op, amount) {
+  const a = {
+    id: crypto.randomBytes(6).toString('hex'), user: jid, name: String(name || 'Player').slice(0, 60),
+    field: 'balance', op, amount, status: 'pending', createdAt: Date.now(), by: 'game', game: true
+  };
+  db.gameAdj.unshift(a);
+  if (db.gameAdj.length > 300) db.gameAdj = db.gameAdj.filter((x, i) => i < 300 || OPEN(x));
+  return a;
+}
+// the bot has answered a game settlement: keep the site's copy of the wallet in step with it
+function gameAcked(a, ok, r) {
+  if (ok) {
+    const told = Number.isFinite(Number(r && r.balance));
+    for (const src of [db.balances, db.users]) {
+      if (!src[a.user]) continue;
+      if (told) src[a.user].balance = Math.floor(Number(r.balance));
+      else src[a.user].balance = Math.max(0, (src[a.user].balance || 0) + (a.op === 'add' ? a.amount : -a.amount));
+    }
+  }
+  aviator.onAck(a.id);
+}
+
 // the bot reports each leg of a transfer: take the money first, give it only after that worked
 function transferLeg(a, ok, r) {
   const t = db.transfers.find(x => x.id === a.transferId);
@@ -519,6 +543,14 @@ async function route(req, res) {
           jobs.push({ id: a.id, user: a.user, field: a.field, op: a.op, amount: a.amount });
         }
       }
+      for (const a of db.gameAdj) {
+        if (jobs.length >= 50) break;
+        const redeliver = a.status === 'sent' && now - (a.sentAt || 0) > 180000;
+        if (a.status === 'pending' || redeliver) {
+          a.status = 'sent'; a.sentAt = now;
+          jobs.push({ id: a.id, user: a.user, field: a.field, op: a.op, amount: a.amount });
+        }
+      }
       for (const a of db.jobs) {
         if (jobs.length >= 50) break;
         if (a.status === 'pending' && now - a.createdAt > JOB_TTL * 2) { a.status = 'expired'; a.error = 'bot_offline'; a.doneAt = now; continue; }
@@ -537,7 +569,7 @@ async function route(req, res) {
       const results = Array.isArray(body.results) ? body.results.slice(0, 100) : [];
       for (const r of results) {
         const id = String(r?.id);
-        const a = db.adjustments.find(x => x.id === id) || db.jobs.find(x => x.id === id);
+        const a = db.adjustments.find(x => x.id === id) || db.jobs.find(x => x.id === id) || db.gameAdj.find(x => x.id === id);
         if (!a || a.status === 'done' || a.status === 'cancelled') continue;
         a.status = r.ok ? 'done' : 'failed';
         a.doneAt = Date.now();
@@ -550,6 +582,7 @@ async function route(req, res) {
           if (a.user && db.balances[a.user]) db.balances[a.user].balance = a.balanceAfter;
         }
         if (a.transferId) transferLeg(a, !!r.ok, r);
+        if (a.game) gameAcked(a, !!r.ok, r);
       }
       save();
       return send(res, 200, { ok: true });
@@ -712,7 +745,7 @@ async function route(req, res) {
       const fF = op === 'deposit' ? 'balance' : 'bank', tF = op === 'deposit' ? 'bank' : 'balance';
       if (db.transfers.some(t => t.from === me.jid && t.to === me.jid && t.status === 'debiting')) return send(res, 429, { ok: false, error: 'too_many_pending' });
       const committed = db.transfers.filter(t => t.from === me.jid && t.status === 'debiting' && (t.fromField || 'balance') === fF).reduce((s, t) => s + t.amount, 0);
-      const have = Math.max(0, (me.w[fF] || 0) - committed);
+      const have = Math.max(0, (me.w[fF] || 0) - committed - (fF === 'balance' ? aviator.hold(acc.number) : 0));   // money staked in the crash game is not free to move
       const all = String(b.amount).toLowerCase() === 'all';
       const amount = all ? have : Number(String(b.amount ?? '').replace(/[,$\s]/g, ''));
       if (!Number.isInteger(amount) || amount < 1 || amount > 1e12) return send(res, 400, { ok: false, error: all ? 'nothing_to_move' : 'bad_amount' });
@@ -756,7 +789,7 @@ async function route(req, res) {
       if (to.jid === from.jid) return send(res, 400, { ok: false, error: 'self' });
       const open = db.transfers.filter(t => t.from === from.jid && t.status === 'debiting' && (t.fromField || 'balance') === 'balance');
       if (open.length >= 3) return send(res, 429, { ok: false, error: 'too_many_pending' });
-      const have = Math.max(0, (from.w.balance || 0) - open.reduce((s, t) => s + t.amount, 0));
+      const have = Math.max(0, (from.w.balance || 0) - open.reduce((s, t) => s + t.amount, 0) - aviator.hold(acc.number));   // money staked in the crash game is not free to send
       if (amount > have) return send(res, 400, { ok: false, error: 'insufficient', need: amount, have });
       const t = {
         id: crypto.randomBytes(6).toString('hex'), owner: acc.number, toKey: key,
@@ -876,7 +909,7 @@ async function route(req, res) {
         totalMoney: us.reduce((s, u) => s + total(u), 0),
         activeCoupons: cs.filter(c => c.claims < c.maxClaims).length,
         couponValueLeft: cs.reduce((s, c) => s + c.amount * Math.max(0, c.maxClaims - c.claims), 0),
-        pendingEdits: db.adjustments.filter(OPEN).length + db.jobs.filter(a => OPEN(a) && a.type !== 'buy').length,
+        pendingEdits: db.adjustments.filter(OPEN).length + db.jobs.filter(a => OPEN(a) && a.type !== 'buy').length + db.gameAdj.filter(OPEN).length,
         accounts: Object.keys(db.accounts).length,
         bannedAccounts: Object.values(db.accounts).filter(a => a.banned).length,
         ordersToday: db.jobs.filter(a => a.type === 'buy' && a.status === 'done' && a.doneAt > Date.now() - 86400000).length,
@@ -1145,6 +1178,34 @@ async function route(req, res) {
       })) });
     }
 
+    // ── crash-plane game settings (difficulty, on/off, stake limits) ──
+    if (p === '/admin/api/game' && req.method === 'GET') return send(res, 200, Object.assign({ ok: true }, aviator.adminInfo()));
+
+    if (p === '/admin/api/game' && req.method === 'POST') {
+      const b = await readBody(req);
+      const patch = {}, said = [];
+      if (b.difficulty !== undefined) { patch.difficulty = String(b.difficulty); said.push('difficulty ' + patch.difficulty); }
+      if (b.enabled !== undefined) { patch.enabled = !!b.enabled; said.push(patch.enabled ? 'game ON' : 'game OFF'); }
+      for (const k of ['minBet', 'maxBet']) {
+        if (b[k] === undefined) continue;
+        const v = String(b[k]).trim() === '' ? 0 : parseAmount(b[k]);
+        if (!Number.isFinite(v) || v < 0 || v > 1e12) return send(res, 400, { ok: false, error: 'bad_amount' });
+        patch[k] = v; said.push(k + ' ' + (v || 'no limit'));
+      }
+      const r = aviator.setSettings(patch);
+      if (r.error) return send(res, 400, { ok: false, error: r.error });
+      addAudit(me, 'game_settings', said.join(', ') || 'no change');
+      save();
+      return send(res, 200, { ok: true, settings: r.settings });
+    }
+
+    if (p === '/admin/api/game/reset-stats' && req.method === 'POST') {
+      aviator.resetStats();
+      addAudit(me, 'game_reset_stats', 'crash-plane totals reset');
+      save();
+      return send(res, 200, { ok: true });
+    }
+
     if (p === '/admin/api/audit') return send(res, 200, { ok: true, items: db.audit.slice(0, 100) });
 
     return send(res, 404, { ok: false, error: 'not_found' });
@@ -1165,12 +1226,21 @@ async function route(req, res) {
 
 // the crash-plane game lives in its own file so this one stays readable
 const aviator = require('./aviator-engine')({
-  dataDir: DATA_DIR, send, readBody, clientIp, hit, SEC_HEADERS,
+  dataDir: DATA_DIR, send, readBody, clientIp, hit, SEC_HEADERS, save,
   getAcc: (req) => {
     const us = getSession(req, 'usid', usessions);
     const acc = us ? db.accounts[us.user] : null;
     return acc && !acc.banned ? acc : null;
-  }
+  },
+  // the player's real wallet, as the bot last reported it, minus site transfers the bot has not applied yet
+  getWallet: (acc) => {
+    const pl = findPlayer(acc.number, acc.jid);
+    if (!pl) return null;
+    const out = db.transfers.filter(t => t.from === pl.jid && t.status === 'debiting' && (t.fromField || 'balance') === 'balance').reduce((s, t) => s + t.amount, 0);
+    return { jid: pl.jid, name: pl.w.name || acc.name, balance: (pl.w.balance || 0) - out };
+  },
+  queueAdj: queueGameAdj,
+  getAdj: (id) => db.gameAdj.find(x => x.id === id) || null
 });
 
 http.createServer(async (req, res) => {
