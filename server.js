@@ -305,6 +305,69 @@ function transferLeg(a, ok, r) {
   }
 }
 
+// ── MongoDB peek (admin only): shows how the bot's database is laid out, hiding secrets and phone numbers ──
+const pkMask = (v) => String(v).replace(/\d{7,}/g, d => '•'.repeat(d.length - 3) + d.slice(-3)).slice(0, 24);
+function pkDescribe(v, depth = 0) {
+  if (v === null || v === undefined) return 'null';
+  if (typeof v === 'number') return 'number (' + v + ')';
+  if (typeof v === 'boolean') return 'boolean';
+  if (typeof v === 'string') return 'text (' + pkMask(v) + ')';
+  if (v instanceof Date) return 'date';
+  if (Array.isArray(v)) {
+    if (!v.length) return 'list (empty)';
+    if (depth >= 3) return 'list (' + v.length + ' items)';
+    return 'list of ' + v.length + ': [ ' + v.slice(0, 2).map(x => pkDescribe(x, depth + 1)).join(', ') + (v.length > 2 ? ', …' : '') + ' ]';
+  }
+  if (typeof v === 'object') {
+    if (v._bsontype) return String(v._bsontype);
+    const keys = Object.keys(v);
+    if (depth >= 3) return 'object (' + keys.length + ' keys)';
+    return '{ ' + keys.slice(0, 25).map(k => pkMask(k) + ': ' + pkDescribe(v[k], depth + 1)).join(', ') + (keys.length > 25 ? ', …' : '') + ' }';
+  }
+  return typeof v;
+}
+// up to 6 Mongo URLs: MONGO_URL, MONGO_URL_2 … MONGO_URL_6 (when one cluster is full the next one is used)
+function mongoUrls() {
+  return ['MONGO_URL', 'MONGO_URL_2', 'MONGO_URL_3', 'MONGO_URL_4', 'MONGO_URL_5', 'MONGO_URL_6']
+    .map((k, i) => ({ n: i + 1, key: k, url: String(process.env[k] || '').trim() })).filter(x => x.url);
+}
+async function peekOne(MongoClient, c) {
+  const out = ['=== MONGO #' + c.n + ' (' + c.key + ') ==='];
+  const client = new MongoClient(c.url, { serverSelectionTimeoutMS: 10000 });
+  try {
+    await client.connect();
+    let names;
+    try { names = (await client.db().admin().listDatabases()).databases.map(d => d.name).filter(n => !['admin', 'local', 'config'].includes(n)); }
+    catch { names = [client.db(process.env.MONGO_DB || undefined).databaseName]; }
+    for (const name of names.slice(0, 10)) {
+      const mdb = client.db(name);
+      out.push('DATABASE: ' + name);
+      try {
+        const st = await mdb.command({ dbStats: 1, scale: 1048576 });
+        out.push('  size: ' + Math.round(st.dataSize) + ' MB of data, ' + Math.round(st.storageSize) + ' MB stored (Atlas free plan limit: 512 MB)');
+      } catch {}
+      for (const col of (await mdb.listCollections().toArray()).slice(0, 40)) {
+        const cc = mdb.collection(col.name);
+        out.push('  COLLECTION: ' + col.name + ' (' + (await cc.estimatedDocumentCount()) + ' documents)');
+        const doc = await cc.findOne({});
+        if (doc) out.push('    example: ' + pkDescribe(doc));
+      }
+    }
+    if (!names.length) out.push('Connected, but no databases were found.');
+  } catch (e) {
+    out.push('Could not connect: ' + String(e.message).replace(/\/\/[^@\s]*@/g, '//***@'));
+  } finally { client.close().catch(() => {}); }
+  return out.join('\n');
+}
+async function mongoPeek() {
+  const list = mongoUrls();
+  if (!list.length) return 'No Mongo URL is set.\nOn Render: your service → Environment → add MONGO_URL (and MONGO_URL_2 … MONGO_URL_6 if you have more) → Save → wait for the redeploy → open this page again.';
+  let MongoClient;
+  try { ({ MongoClient } = require('mongodb')); }
+  catch { return 'The "mongodb" package is not installed. Make sure package.json (the new one) is uploaded and redeploy so Render runs npm install.'; }
+  return (await Promise.all(list.map(c => peekOne(MongoClient, c)))).join('\n\n');
+}
+
 // ── routing ─────────────────────────────────────────────────────
 const FIELDS = ['balance', 'bank', 'gams'];
 const OPS    = ['add', 'remove', 'set'];
@@ -793,6 +856,13 @@ async function route(req, res) {
     }
 
     if (p === '/admin/api/me') return send(res, 200, { ok: true, user: me, siteName: SITE_NAME });
+
+    // open /admin/api/mongo-peek in the browser while logged in to admin: plain text, safe to copy
+    if (p === '/admin/api/mongo-peek' && req.method === 'GET') {
+      const text = await mongoPeek();
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+      return res.end(text);
+    }
 
     if (p === '/admin/api/overview') {
       const us = Object.values(db.users);
