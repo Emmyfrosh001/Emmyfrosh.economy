@@ -16,7 +16,7 @@
       <a class="back" href="/" aria-label="Home">&#8592;</a>
       <div class="brand"><span class="bname">𝛯𝛭𝛭𝑌𝐹𝑅𝛩𝑆𝛨 💔</span></div>
       <span class="grow"></span>
-      <div id="balChip" class="bal-chip" hidden><span>Credits</span><strong id="bal">0</strong></div>
+      <div id="balChip" class="bal-chip" hidden><span>Wallet</span><strong id="bal">0</strong></div>
       <a id="hdLogin" class="btn-n small ghost-n" href="/login?next=%2Faviator" hidden>Log in</a>
       <a id="hdSignup" class="btn-n small" href="/signup?next=%2Faviator" hidden>Sign up</a>
     </div>
@@ -40,6 +40,16 @@
           <span class="s-muted">You can watch the rounds without an account.</span>
           <a class="btn-n small" href="/login?next=%2Faviator">Log in</a>
           <a class="btn-n small ghost-n" href="/signup?next=%2Faviator">Create account</a>
+        </div>
+
+        <div id="noMoney" class="s-card av-note" hidden>
+          <strong id="nmTitle">Your wallet is empty.</strong>
+          <span id="nmText" class="s-muted">You can play again as soon as you have money.</span>
+          <a class="btn-n small ghost-n" href="/shop">Open shop &amp; bank</a>
+        </div>
+        <div id="closedNote" class="s-card av-note" hidden>
+          <strong>The game is closed right now.</strong>
+          <span class="s-muted">Please check again later.</span>
         </div>
 
         <div class="panels">
@@ -84,7 +94,6 @@
           </div>
         </div>
 
-        <button id="refill" class="btn-n small" type="button" hidden>Get free practice credits</button>
       </section>
 
       <aside class="av-right">
@@ -100,7 +109,7 @@
           <p class="mono small wrapx"><span class="s-muted">Hash</span> <span id="fHash">–</span></p>
           <p class="mono small wrapx"><span class="s-muted">Previous secret</span> <span id="fSeed">–</span> <b id="fOk"></b></p>
         </div>
-        <p class="s-muted small">These are practice credits. They are not your bot wallet and cannot be cashed out.</p>
+        <p class="s-muted small">You play with the money in your wallet, the same wallet the bot uses. Stakes leave it right away and wins are added to it. The bot's own balance catches up within about 20 seconds. When your wallet is empty you cannot bet.</p>
       </aside>
     </div>
   </main>
