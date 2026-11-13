@@ -34,6 +34,7 @@
       <button class="s-tab on" data-tab="shop" type="button" role="tab">Shop</button>
       <button class="s-tab" data-tab="market" type="button" role="tab">Market</button>
       <button class="s-tab" data-tab="rates" type="button" role="tab">Rates</button>
+      <button class="s-tab" data-tab="games" type="button" role="tab">Games</button>
       <button class="s-tab" data-tab="wallet" type="button" role="tab" id="walletTab" hidden>Wallet</button>
       <button class="s-tab" data-tab="inv" type="button" role="tab" id="invTab" hidden>Inventory</button>
       <button class="s-tab" data-tab="orders" type="button" role="tab" id="ordersTab" hidden>Orders</button>
@@ -55,6 +56,17 @@
       <p class="s-muted small">Live coin rates (they move a little every 10 minutes) and the cheapest seller on the market right now.</p>
       <div id="rateList" class="rate-list"></div>
       <p id="ratesEmpty" class="s-empty" hidden>No rates yet. The bot sends them every 30 seconds.</p>
+    </section>
+
+    <section id="tab-games" class="s-panel" hidden>
+      <div class="game-grid">
+        <a class="game-card" href="/aviator" aria-label="Play Crash Plane">
+          <span class="game-pic"><img src="/plane.svg" alt="" width="240" height="120"></span>
+          <span class="game-name">Crash Plane</span>
+          <span class="game-sub">Bet with your wallet money and cash out before the plane flies away.</span>
+          <span class="game-play">Play now</span>
+        </a>
+      </div>
     </section>
 
     <section id="tab-wallet" class="s-panel" hidden>
