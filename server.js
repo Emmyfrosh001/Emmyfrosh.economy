@@ -1053,6 +1053,7 @@ async function route(req, res) {
     if (p === '/' || p === '/index.html') return sendFile(res, 'index.html');
     if (p === '/admin' || p === '/admin/') return sendFile(res, 'admin.html');
     if (p === '/shop' || p === '/shop/') return sendFile(res, 'shop.html');
+    if (p === '/login' || p === '/login/' || p === '/signup' || p === '/signup/') return sendFile(res, 'login.html');
     if (/^\/[A-Za-z0-9_.-]+$/.test(p) && ['.css', '.js', '.svg', '.png', '.ico'].includes(path.extname(p)))
       return sendFile(res, p.slice(1));
   }
