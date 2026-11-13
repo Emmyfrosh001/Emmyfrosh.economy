@@ -38,11 +38,6 @@ const ERR = {
 
 let state = null, tab = 'shop', timer = null, wantWallet = location.hash === '#wallet';
 
-// 💬 customer care: the round chat bubble (chat.js) opens with a ready-made message
-function askCare(text) { if (window.openSupportChat) window.openSupportChat(text); }
-$('forgotChat').addEventListener('click', () => askCare('I forgot my website password. My WhatsApp number is: '));
-$('signupHelp').addEventListener('click', () => askCare('I already have an account but forgot my password. My WhatsApp number is: '));
-
 async function api(path, method, body) {
   const opt = { method: method || 'GET', headers: {} };
   if (opt.method !== 'GET') { opt.headers['Content-Type'] = 'application/json'; opt.headers['X-Requested-With'] = 'XMLHttpRequest'; opt.body = JSON.stringify(body || {}); }
@@ -71,7 +66,8 @@ async function load() {
   try { state = await api('/shop/api/state'); } catch { $('updated').textContent = 'Could not reach the server. Retrying…'; return; }
   document.title = (state.siteName || 'Shop') + ' — Shop & Market';
   const me = state.me;
-  $('loginView').hidden = !!me;
+  $('hdLogin').hidden = !!me;
+  $('hdSignup').hidden = !!me;
   $('meBar').hidden = !me;
   $('logoutBtn').hidden = !me;
   $('ordersTab').hidden = !me;
@@ -81,6 +77,7 @@ async function load() {
     $('wWallet').textContent = '$' + fmt(me.balance); $('wBank').textContent = '$' + fmt(me.bank); $('wTotal').textContent = '$' + fmt((me.balance || 0) + (me.bank || 0));
     if (wantWallet) { wantWallet = false; setTab('wallet'); }
   }
+  else if (wantWallet) { location.replace('/login?next=' + encodeURIComponent('/shop#wallet')); return; }   // /shop#wallet while logged out → log in first
   else if (tab === 'orders' || tab === 'wallet') setTab('shop');
   $('updated').textContent = state.updatedAt ? 'Updated ' + new Date(state.updatedAt).toLocaleTimeString() : 'Waiting for the bot…';
   render();
@@ -150,7 +147,11 @@ function render() {
   });
 }
 
-function needLogin() { toast('Log in with your WhatsApp number to buy.', true); $('loginView').scrollIntoView({ behavior: 'smooth' }); $('num').focus(); }
+// not logged in and tapped Buy: ask them to log in or sign up (no big login box on the page)
+function needLogin() { $('loginModal').hidden = false; }
+$('loginModalClose').addEventListener('click', () => { $('loginModal').hidden = true; });
+$('loginModal').addEventListener('click', (e) => { if (e.target === $('loginModal')) $('loginModal').hidden = true; });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('loginModal').hidden = true; });
 
 function setTab(t) {
   tab = t;
@@ -338,36 +339,7 @@ $('buyGo').addEventListener('click', async () => {
   polling = false;
 });
 
-// ── sign up ───────────────────────────────────────────────────
-function authMode(signup) {
-  $('authLogin').classList.toggle('on', !signup); $('authSignup').classList.toggle('on', signup);
-  $('loginForm').hidden = signup; $('signupForm').hidden = !signup; $('verifyBox').hidden = true;
-}
-$('authLogin').addEventListener('click', () => authMode(false));
-$('authSignup').addEventListener('click', () => authMode(true));
-$('verifyDone').addEventListener('click', () => { authMode(false); $('num').value = $('sNum').value; $('pw').focus(); });
-$('signupForm').addEventListener('submit', async (e) => {
-  e.preventDefault(); $('signupErr').hidden = true;
-  if ($('sPw').value !== $('sPw2').value) { $('signupErr').textContent = ERR.mismatch; $('signupErr').hidden = false; return; }
-  try {
-    const j = await api('/shop/signup', 'POST', { number: $('sNum').value, password: $('sPw').value });
-    $('signupForm').hidden = true;
-    $('verifyCode').textContent = '.verify ' + j.code;
-    $('verifyMins').textContent = j.minutes;
-    $('verifyBox').hidden = false;
-    $('sPw').value = ''; $('sPw2').value = '';
-  } catch (err) { $('signupErr').textContent = ERR[err.message] || 'Could not create the account.'; $('signupErr').hidden = false; }
-});
-
-// ── login / logout ────────────────────────────────────────────
-$('loginForm').addEventListener('submit', async (e) => {
-  e.preventDefault(); $('loginErr').hidden = true;
-  try {
-    await api('/shop/login', 'POST', { number: $('num').value, password: $('pw').value });
-    $('pw').value = '';
-    await load(); toast('Welcome back!');
-  } catch (err) { $('loginErr').textContent = ERR[err.message] || 'Could not log in.'; $('loginErr').hidden = false; }
-});
+// ── logout ────────────────────────────────────────────────────
 $('logoutBtn').addEventListener('click', async () => { try { await api('/shop/logout', 'POST'); } catch {} await load(); });
 
 load();
