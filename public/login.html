@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#040b1f">
+  <title>Log in or sign up</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%94%91%3C/text%3E%3C/svg%3E">
+</head>
+<body class="public shop">
+
+  <header class="topbar">
+    <div class="wrap topbar-in">
+      <a class="back" href="/" aria-label="Home">&#8592;</a>
+      <div class="brand"><span>EMMYFROSH-<span class="ai">AI</span></span></div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="s-card login-n">
+      <div class="s-tabs auth-tabs" role="tablist">
+        <button class="s-tab on" id="authLogin" type="button" role="tab">Log in</button>
+        <button class="s-tab" id="authSignup" type="button" role="tab">Sign up</button>
+      </div>
+
+      <form id="loginForm" autocomplete="on">
+        <p class="s-muted">Use your WhatsApp number and your password.</p>
+        <label for="num">WhatsApp number</label>
+        <input id="num" name="username" type="tel" inputmode="tel" autocomplete="username" placeholder="2348012345678" required>
+        <label for="pw">Password</label>
+        <input id="pw" name="password" type="password" autocomplete="current-password" required>
+        <button class="btn-n" type="submit">Log in</button>
+        <p id="loginErr" class="s-err" role="alert" hidden></p>
+        <div class="s-help">
+          <strong>Forgot your password?</strong>
+          <span>For safety, passwords can't be reset on the site or in the bot. Tap the button (or the round chat bubble) to chat with customer care. No login needed. They will reset it for you.</span>
+          <button class="btn-n small" id="forgotChat" type="button">💬 Chat with customer care</button>
+        </div>
+      </form>
+
+      <form id="signupForm" autocomplete="off" hidden>
+        <p class="s-muted">Pick a password, then confirm your number once in WhatsApp.</p>
+        <label for="sNum">WhatsApp number</label>
+        <input id="sNum" type="tel" inputmode="tel" placeholder="2348012345678" required>
+        <label for="sPw">Password <span class="s-muted small">(6–40 characters, no spaces)</span></label>
+        <input id="sPw" type="password" autocomplete="new-password" minlength="6" maxlength="40" required>
+        <label for="sPw2">Repeat password</label>
+        <input id="sPw2" type="password" autocomplete="new-password" minlength="6" maxlength="40" required>
+        <button class="btn-n" type="submit">Create account</button>
+        <p id="signupErr" class="s-err" role="alert" hidden></p>
+        <p class="s-muted small">Already made an account and forgot the password? <button id="signupHelp" class="s-link" type="button">Chat with customer care</button></p>
+      </form>
+
+      <div id="verifyBox" class="s-help ok" hidden>
+        <strong>Almost done: confirm your number</strong>
+        <span>Open a <em>private</em> chat with the bot on WhatsApp (from the same number) and send:</span>
+        <code id="verifyCode"></code>
+        <span>The code works for <span id="verifyMins">60</span> minutes. After the bot says “verified”, come back and log in (about 30 seconds).</span>
+        <button id="verifyDone" class="btn-n small" type="button">I sent it, go to log in</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="/login.js"></script>
+  <script src="/chat.js"></script>
+</body>
+</html>
