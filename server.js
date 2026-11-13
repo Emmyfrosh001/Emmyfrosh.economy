@@ -382,6 +382,9 @@ async function route(req, res) {
 
   if (req.method === 'GET' && p === '/healthz') return send(res, 200, { ok: true });
 
+  // ─────────── crash-plane game (live stream + bet / cash out) ───────────
+  if (p.startsWith('/aviator/')) return aviator.handle(req, res, p);
+
   // ─────────── bot → site (needs API key) ───────────
   const BOT = ['/coupon/create', '/coupon/redeem', '/api/sync', '/api/market/sync', '/api/verify', '/api/pending', '/api/ack'];
   if (BOT.includes(p)) {
@@ -1152,12 +1155,23 @@ async function route(req, res) {
     if (p === '/' || p === '/index.html') return sendFile(res, 'index.html');
     if (p === '/admin' || p === '/admin/') return sendFile(res, 'admin.html');
     if (p === '/shop' || p === '/shop/') return sendFile(res, 'shop.html');
+    if (p === '/aviator' || p === '/game' || p === '/crash') return sendFile(res, 'aviator.html');
     if (p === '/login' || p === '/login/' || p === '/signup' || p === '/signup/') return sendFile(res, 'login.html');
     if (/^\/[A-Za-z0-9_.-]+$/.test(p) && ['.css', '.js', '.svg', '.png', '.ico'].includes(path.extname(p)))
       return sendFile(res, p.slice(1));
   }
   return send(res, 404, { ok: false, error: 'not_found' });
 }
+
+// the crash-plane game lives in its own file so this one stays readable
+const aviator = require('./aviator-engine')({
+  dataDir: DATA_DIR, send, readBody, clientIp, hit, SEC_HEADERS,
+  getAcc: (req) => {
+    const us = getSession(req, 'usid', usessions);
+    const acc = us ? db.accounts[us.user] : null;
+    return acc && !acc.banned ? acc : null;
+  }
+});
 
 http.createServer(async (req, res) => {
   try { await route(req, res); }
