@@ -25,10 +25,18 @@ const ERR = {
   bad_password: 'Password must be 6–40 characters with no spaces.',
   busy: 'The site is busy. Try again in a few minutes.',
   mismatch: 'The two passwords are not the same.',
-  player_not_found: 'The bot cannot find your player. Send any command to the bot first.'
+  player_not_found: 'The bot cannot find your player. Send any command to the bot first.',
+  recipient_not_found: 'No player found with that number. Check it, and make sure they have used the bot.',
+  self: 'You cannot send money to yourself.',
+  bad_amount: 'Enter a valid amount.',
+  credit_failed: 'Could not reach the other player. Your money was returned.',
+  refunded: 'Could not reach the other player. Your money was returned.',
+  refund_failed: 'Something went wrong. Contact customer care with this transfer.',
+  nothing_to_move: 'There is nothing to move.',
+  bad_op: 'Something went wrong. Try again.'
 };
 
-let state = null, tab = 'shop', timer = null;
+let state = null, tab = 'shop', timer = null, wantWallet = location.hash === '#wallet';
 
 // 💬 customer care: the round chat bubble (chat.js) opens with a ready-made message
 function askCare(text) { if (window.openSupportChat) window.openSupportChat(text); }
@@ -67,11 +75,17 @@ async function load() {
   $('meBar').hidden = !me;
   $('logoutBtn').hidden = !me;
   $('ordersTab').hidden = !me;
-  if (me) { $('meName').textContent = me.name; $('meBal').textContent = '$' + fmt(me.balance); }
-  else if (tab === 'orders') setTab('shop');
+  $('walletTab').hidden = !me;
+  if (me) {
+    $('meName').textContent = me.name; $('meBal').textContent = '$' + fmt(me.balance); $('meBank').textContent = '$' + fmt(me.bank);
+    $('wWallet').textContent = '$' + fmt(me.balance); $('wBank').textContent = '$' + fmt(me.bank); $('wTotal').textContent = '$' + fmt((me.balance || 0) + (me.bank || 0));
+    if (wantWallet) { wantWallet = false; setTab('wallet'); }
+  }
+  else if (tab === 'orders' || tab === 'wallet') setTab('shop');
   $('updated').textContent = state.updatedAt ? 'Updated ' + new Date(state.updatedAt).toLocaleTimeString() : 'Waiting for the bot…';
   render();
   if (tab === 'orders') loadOrders();
+  if (tab === 'wallet' && !sending && !moving) loadTransfers();
 }
 
 function card(title, sub, price, btnText, onClick, opts = {}) {
@@ -140,12 +154,13 @@ function needLogin() { toast('Log in with your WhatsApp number to buy.', true); 
 
 function setTab(t) {
   tab = t;
-  document.querySelectorAll('.s-tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+  document.querySelectorAll('.s-tab[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   document.querySelectorAll('.s-panel').forEach(p => { p.hidden = p.id !== 'tab-' + t; });
-  $('q').parentElement.hidden = t === 'orders';
+  $('q').parentElement.hidden = t === 'orders' || t === 'wallet';
   if (t === 'orders') loadOrders();
+  if (t === 'wallet') { loadTransfers(); load(); }
 }
-document.querySelectorAll('.s-tab').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
+document.querySelectorAll('.s-tab[data-tab]').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
 $('q').addEventListener('input', render);
 
 // ── orders list ───────────────────────────────────────────────
@@ -164,6 +179,109 @@ async function loadOrders() {
     });
   } catch {}
 }
+
+// ── wallet: send money ────────────────────────────────────────
+let sending = false, moving = false;
+function amt(v) {
+  const m = String(v || '').toLowerCase().replace(/[,$_\s]/g, '').match(/^(\d+(?:\.\d+)?)([kmbt])?$/);
+  if (!m) return NaN;
+  return Math.floor(parseFloat(m[1]) * ({ k: 1e3, m: 1e6, b: 1e9, t: 1e12 }[m[2]] || 1));
+}
+function sstatus(msg, cls) { const s = $('sendStatus'); s.textContent = msg; s.className = 's-status ' + (cls || ''); s.hidden = false; }
+
+async function loadTransfers() {
+  if (!state || !state.me) return;
+  try {
+    const j = await api('/shop/api/transfers');
+    const box = $('xferList'); box.replaceChildren();
+    $('xferEmpty').hidden = j.items.length > 0;
+    j.items.forEach(t => {
+      const out = t.dir === 'out';
+      const label = t.kind === 'deposit' ? 'Deposited $' + fmt(t.amount) + ' to your bank'
+        : t.kind === 'withdraw' ? 'Withdrew $' + fmt(t.amount) + ' from your bank'
+        : (out ? 'Sent $' : 'Received $') + fmt(t.amount) + (out ? ' to ' : ' from ') + t.name;
+      const r = el('div', 'order ' + (t.status === 'failed' ? 'failed' : t.status === 'done' ? 'done' : ''));
+      r.append(
+        el('strong', '', label),
+        el('span', 's-muted', new Date(t.at).toLocaleString() + ' · ' + (t.status === 'done' ? 'Done' : t.status === 'failed' ? 'Failed' + (t.error ? ' — ' + (ERR[t.error] || t.error) : '') : 'Processing…'))
+      );
+      box.append(r);
+    });
+  } catch {}
+}
+
+// deposit (wallet → bank) and withdraw (bank → wallet)
+function bstatus(msg, cls) { const s = $('bankStatus'); s.textContent = msg; s.className = 's-status ' + (cls || ''); s.hidden = false; }
+async function bankMove(op) {
+  if (moving || sending) return;
+  const raw = $('bankAmt').value.trim().toLowerCase();
+  const amount = raw === 'all' ? 'all' : amt(raw);
+  if (amount !== 'all' && (!Number.isInteger(amount) || amount < 1)) return bstatus(ERR.bad_amount, 'bad');
+  moving = true; $('depBtn').disabled = true; $('withBtn').disabled = true;
+  bstatus(op === 'deposit' ? 'Depositing…' : 'Withdrawing…');
+  try {
+    const j = await api('/shop/api/bank', 'POST', { op, amount });
+    for (let i = 0; i < 60; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const s = await api('/shop/api/send?id=' + j.id);
+      if (s.status === 'done') {
+        bstatus('✅ ' + (op === 'deposit' ? 'Deposited $' + fmt(s.amount) + ' to your bank.' : 'Withdrew $' + fmt(s.amount) + ' to your wallet.'), 'ok');
+        $('bankAmt').value = '';
+        return;
+      }
+      if (s.status === 'failed') { bstatus('❌ ' + (ERR[s.error] || 'It failed. Nothing was moved.'), 'bad'); return; }
+    }
+    bstatus('Still working. Check “Recent transfers” in a minute.', 'bad');
+  } catch (err) {
+    let m = ERR[err.message] || 'Something went wrong. Try again.';
+    if (err.message === 'insufficient') m = (op === 'withdraw' ? 'Not enough money in your bank.' : 'Not enough money in your wallet.') + (err.data && err.data.have !== undefined ? ' You can move up to $' + fmt(err.data.have) + '.' : '');
+    bstatus('❌ ' + m, 'bad');
+    if (err.message === 'not_logged_in') load();
+  } finally {
+    moving = false; $('depBtn').disabled = false; $('withBtn').disabled = false;
+    await load(); loadTransfers();
+  }
+}
+$('bankForm').addEventListener('submit', (e) => e.preventDefault());
+$('depBtn').addEventListener('click', () => bankMove('deposit'));
+$('withBtn').addEventListener('click', () => bankMove('withdraw'));
+
+$('sendForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (sending) return;
+  const number = $('sendNum').value.trim();
+  const amount = amt($('sendAmt').value);
+  if (!Number.isInteger(amount) || amount < 1) return sstatus(ERR.bad_amount, 'bad');
+  sending = true; $('sendGo').disabled = true;
+  sstatus('Checking the number…');
+  try {
+    const who = await api('/shop/api/lookup?number=' + encodeURIComponent(number));
+    if (!confirm('Send $' + fmt(amount) + ' to ' + who.name + '?')) { sstatus('Cancelled.'); return; }
+    sstatus('Sending…');
+    const j = await api('/shop/api/send', 'POST', { number, amount });
+    sstatus('Sent to the bot. Waiting for it to move the money…');
+    for (let i = 0; i < 60; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const s = await api('/shop/api/send?id=' + j.id);
+      if (s.status === 'done') {
+        sstatus('✅ Sent $' + fmt(s.amount) + ' to ' + s.name + '.', 'ok');
+        $('sendAmt').value = '';
+        toast('Money sent to ' + s.name + '.');
+        return;
+      }
+      if (s.status === 'failed') { sstatus('❌ ' + (ERR[s.error] || 'The transfer failed. You were not charged.'), 'bad'); return; }
+    }
+    sstatus('Still working. Check “Recent transfers” in a minute.', 'bad');
+  } catch (err) {
+    let m = ERR[err.message] || 'Something went wrong. Try again.';
+    if (err.message === 'insufficient' && err.data) m += ' You can send up to $' + fmt(err.data.have) + '.';
+    sstatus('❌ ' + m, 'bad');
+    if (err.message === 'not_logged_in') load();
+  } finally {
+    sending = false; $('sendGo').disabled = false;
+    await load(); loadTransfers();
+  }
+});
 
 // ── buy dialog ────────────────────────────────────────────────
 let cur = null, polling = false;
