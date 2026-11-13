@@ -71,13 +71,14 @@
     <!-- ACCOUNT BAR -->
     <section id="meBar" class="s-card me-bar" hidden>
       <div><span class="s-muted">Signed in as</span><strong id="meName"></strong></div>
-      <div class="me-money"><span class="s-muted">Wallet</span><strong id="meBal"></strong></div>
+      <div class="me-money"><span class="s-muted">Wallet</span><strong id="meBal"></strong><span class="s-muted small">Bank: <b id="meBank"></b></span></div>
     </section>
 
     <nav class="s-tabs" role="tablist" aria-label="Sections">
       <button class="s-tab on" data-tab="shop" type="button" role="tab">Shop</button>
       <button class="s-tab" data-tab="market" type="button" role="tab">Market</button>
       <button class="s-tab" data-tab="rates" type="button" role="tab">Rates</button>
+      <button class="s-tab" data-tab="wallet" type="button" role="tab" id="walletTab" hidden>Wallet</button>
       <button class="s-tab" data-tab="orders" type="button" role="tab" id="ordersTab" hidden>My orders</button>
     </nav>
 
@@ -97,6 +98,41 @@
       <p class="s-muted small">Live coin rates (they move a little every 10 minutes) and the cheapest seller on the market right now.</p>
       <div id="rateList" class="rate-list"></div>
       <p id="ratesEmpty" class="s-empty" hidden>No rates yet. The bot sends them every 30 seconds.</p>
+    </section>
+
+    <section id="tab-wallet" class="s-panel" hidden>
+      <div class="s-card wallet-grid">
+        <div class="w-box"><span class="s-muted">Wallet</span><strong id="wWallet">$0</strong></div>
+        <div class="w-box"><span class="s-muted">Bank</span><strong id="wBank">$0</strong></div>
+        <div class="w-box"><span class="s-muted">Total</span><strong id="wTotal">$0</strong></div>
+      </div>
+
+      <form id="bankForm" class="s-card send-form" autocomplete="off">
+        <h2 class="s-h2">Deposit or withdraw</h2>
+        <p class="s-muted small">Deposit moves money from your wallet into your bank. Withdraw moves it back to your wallet. Type <strong>all</strong> to move everything.</p>
+        <label for="bankAmt">Amount</label>
+        <input id="bankAmt" type="text" inputmode="text" placeholder="1000 or all" required>
+        <div class="bank-btns">
+          <button class="btn-n" type="button" id="depBtn">Deposit</button>
+          <button class="btn-n ghost-n" type="button" id="withBtn">Withdraw</button>
+        </div>
+        <p id="bankStatus" class="s-status" role="status" hidden></p>
+      </form>
+
+      <form id="sendForm" class="s-card send-form" autocomplete="off">
+        <h2 class="s-h2">Send money</h2>
+        <p class="s-muted small">The money is taken from your wallet and lands in the other player's wallet. You can only send to someone who plays the bot.</p>
+        <label for="sendNum">Their WhatsApp number</label>
+        <input id="sendNum" type="tel" inputmode="tel" placeholder="2348012345678" required>
+        <label for="sendAmt">Amount <span class="s-muted small">(you can type 5k, 2m…)</span></label>
+        <input id="sendAmt" type="text" inputmode="text" placeholder="1000" required>
+        <button class="btn-n" type="submit" id="sendGo">Send money</button>
+        <p id="sendStatus" class="s-status" role="status" hidden></p>
+      </form>
+
+      <h2 class="s-h2">Recent transfers</h2>
+      <div id="xferList" class="order-list"></div>
+      <p id="xferEmpty" class="s-empty" hidden>No transfers yet.</p>
     </section>
 
     <section id="tab-orders" class="s-panel" hidden>
