@@ -250,13 +250,27 @@ function findPlayer(key, jid) {
   if (key && key.length >= 7) for (const src of srcs) for (const id of Object.keys(src)) if (last10(id) === key) return { jid: id, w: src[id] };
   return null;
 }
-// a player's inventory as the bot sends it: [{name, qty}] or {name: qty}
+// a player's inventory as the bot sends it. Accepts {key: qty}, {key: {qty}}, [{name|key|item|id, qty|count|quantity|amount}] or ["key", ...]
+const INV_FIELDS = ['inv', 'inventory', 'items', 'bag', 'backpack', 'assets'];
+function pickInv(o) { if (o) for (const f of INV_FIELDS) if (o[f] !== undefined && o[f] !== null) return o[f]; return undefined; }
+function itemName(k) {
+  k = String(k || '');
+  const m = db.market || {};
+  const hit = [...(m.shop || []), ...(m.coins || [])].find(x => x.key === k || x.name === k);
+  if (hit) return hit.name;
+  return /^[a-z0-9_]+$/.test(k) ? k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : k;
+}
 function normInv(v) {
-  const rows = Array.isArray(v) ? v : (v && typeof v === 'object' ? Object.entries(v).map(([k, q]) => ({ name: k, qty: q })) : []);
+  let rows = [];
+  if (Array.isArray(v)) rows = v.map(x => (typeof x === 'string' ? { name: x, qty: 1 } : x));
+  else if (v && typeof v === 'object') rows = Object.entries(v).map(([k, q]) => (q && typeof q === 'object' ? { ...q, name: q.name || k } : { name: k, qty: q }));
   const out = [];
-  for (const x of rows.slice(0, 100)) {
-    const name = String((x && (x.name || x.key || x.item)) || '').slice(0, 60);
-    const qty = Math.floor(Number(x && x.qty !== undefined ? x.qty : x && x.count));
+  for (const x of rows.slice(0, 200)) {
+    if (!x) continue;
+    const raw = x.name || x.key || x.item || x.id;
+    const q = x.qty ?? x.count ?? x.quantity ?? x.amount ?? x.owned ?? x.n;
+    const qty = Math.floor(Number(q));
+    const name = itemName(raw).slice(0, 60);
     if (name && Number.isFinite(qty) && qty > 0) out.push({ name, qty: Math.min(qty, 1e15) });
   }
   return out;
@@ -354,7 +368,7 @@ async function route(req, res) {
           balance: num0(u.balance), bank: num0(u.bank), gams: num0(u.gams),
           level: Math.max(1, num0(u.level)), job: String(u.job || 'Unemployed').slice(0, 40)
         };
-        if (u.inv !== undefined) users[id].inv = normInv(u.inv);
+        if (pickInv(u) !== undefined) users[id].inv = normInv(pickInv(u));
       }
       db.users = users;
       db.usersUpdatedAt = Date.now();
@@ -403,7 +417,7 @@ async function route(req, res) {
         for (const [jid, b] of Object.entries(body.balances).slice(0, 20000)) {
           const k = jid.slice(0, 100);
           bal[k] = { balance: int(b?.balance), bank: int(b?.bank), level: Math.max(1, int(b?.level)), name: str(b?.name || 'Player', 60) };
-          if (b && b.inv !== undefined) bal[k].inv = normInv(b.inv);   // inventory, if the bot sends it
+          if (pickInv(b) !== undefined) bal[k].inv = normInv(pickInv(b));   // inventory, if the bot sends it
         }
         db.balances = bal;
       }
