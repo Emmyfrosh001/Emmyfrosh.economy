@@ -574,3 +574,23 @@ a.btn-n, button.btn-n { text-decoration: none; }
 .admin .chat-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
 .admin .tab .tab-badge { margin-left: 6px; background: var(--red); color: #fff; border-radius: 99px; font-size: .72rem; padding: 0 7px; }
 @media (max-width: 820px) { .admin .chat-wrap { grid-template-columns: 1fr; } }
+
+/* wallet + send money */
+.me-money small { font-size: .78rem; } .me-money b { color: #fff; }
+.s-h2 { margin: 14px 0 8px; font-family: var(--font); font-size: 1.1rem; color: #fff; }
+.wallet-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.w-box { display: grid; gap: 2px; text-align: center; }
+.w-box strong { font-size: 1.15rem; color: var(--n-cyan); overflow-wrap: anywhere; }
+.send-form { display: grid; gap: 6px; }
+.send-form .s-h2 { margin-top: 0; }
+.send-form .btn-n { margin-top: 10px; }
+@media (max-width: 420px) { .wallet-grid { grid-template-columns: 1fr; } .s-tab { font-size: .8rem; padding: 9px 2px; } }
+
+/* deposit / withdraw + chat zoom button */
+.bank-btns { display: flex; gap: 10px; margin-top: 10px; }
+.bank-btns .btn-n { flex: 1; }
+.send-form .bank-btns .btn-n { margin-top: 0; }
+.cc-zoom { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; font-size: .78rem; color: #a9c1ee; border-top: 1px solid rgba(76, 154, 255, .25); }
+.cc-zoom-btn { font: inherit; font-weight: 800; font-size: .78rem; cursor: pointer; padding: 5px 10px; border-radius: 8px; color: #fff; background: transparent; border: 1.5px solid #2a5bd7; }
+.cc-zoom.hot .cc-zoom-btn { color: #04123a; background: linear-gradient(#5ff0ff, #2ea8ff); border-color: transparent; }
+.cc-m a { color: inherit; text-decoration: underline; font-weight: 800; overflow-wrap: anywhere; }
