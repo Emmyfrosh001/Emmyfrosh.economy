@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#040b1f">
+  <title>Crash Plane</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/aviator.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9C%88%EF%B8%8F%3C/text%3E%3C/svg%3E">
+</head>
+<body class="public shop av">
+
+  <header class="topbar">
+    <div class="wrap topbar-in">
+      <a class="back" href="/" aria-label="Home">&#8592;</a>
+      <div class="brand"><span class="bname">𝛯𝛭𝛭𝑌𝐹𝑅𝛩𝑆𝛨 💔</span></div>
+      <span class="grow"></span>
+      <div id="balChip" class="bal-chip" hidden><span>Credits</span><strong id="bal">0</strong></div>
+      <a id="hdLogin" class="btn-n small ghost-n" href="/login?next=%2Faviator" hidden>Log in</a>
+      <a id="hdSignup" class="btn-n small" href="/signup?next=%2Faviator" hidden>Sign up</a>
+    </div>
+  </header>
+
+  <main class="wrap av-main">
+    <p id="toast" class="s-toast" role="status" hidden></p>
+
+    <div class="av-grid">
+      <section class="av-left">
+        <div id="hist" class="hist" aria-label="Previous crash points"></div>
+
+        <div class="stage">
+          <canvas id="cv" aria-hidden="true"></canvas>
+          <div id="conn" class="conn" hidden>Reconnecting…</div>
+        </div>
+        <p id="live" class="sr-only" aria-live="polite"></p>
+
+        <div id="loginNote" class="s-card av-note" hidden>
+          <strong>Log in to play.</strong>
+          <span class="s-muted">You can watch the rounds without an account.</span>
+          <a class="btn-n small" href="/login?next=%2Faviator">Log in</a>
+          <a class="btn-n small ghost-n" href="/signup?next=%2Faviator">Create account</a>
+        </div>
+
+        <div class="panels">
+          <div class="panel" data-slot="0">
+            <div class="amt-row">
+              <button class="step" data-act="minus" type="button" aria-label="Lower stake">−</button>
+              <input class="amt" type="text" inputmode="decimal" value="100" aria-label="Stake amount" autocomplete="off">
+              <button class="step" data-act="plus" type="button" aria-label="Raise stake">+</button>
+            </div>
+            <div class="chips">
+              <button type="button" data-set="10">10</button>
+              <button type="button" data-set="100">100</button>
+              <button type="button" data-set="500">500</button>
+              <button type="button" data-set="1000">1k</button>
+              <button type="button" data-set="max">MAX</button>
+            </div>
+            <div class="opts">
+              <label class="opt"><input class="autoOn" type="checkbox"> Auto cash out at <span class="x-in"><input class="autoAt" type="text" inputmode="decimal" value="2.00" aria-label="Auto cash out multiplier"><b>x</b></span></label>
+              <label class="opt"><input class="autoBet" type="checkbox"> Auto bet every round</label>
+            </div>
+            <button class="go" type="button">BET</button>
+          </div>
+
+          <div class="panel" data-slot="1">
+            <div class="amt-row">
+              <button class="step" data-act="minus" type="button" aria-label="Lower stake">−</button>
+              <input class="amt" type="text" inputmode="decimal" value="100" aria-label="Stake amount" autocomplete="off">
+              <button class="step" data-act="plus" type="button" aria-label="Raise stake">+</button>
+            </div>
+            <div class="chips">
+              <button type="button" data-set="10">10</button>
+              <button type="button" data-set="100">100</button>
+              <button type="button" data-set="500">500</button>
+              <button type="button" data-set="1000">1k</button>
+              <button type="button" data-set="max">MAX</button>
+            </div>
+            <div class="opts">
+              <label class="opt"><input class="autoOn" type="checkbox"> Auto cash out at <span class="x-in"><input class="autoAt" type="text" inputmode="decimal" value="2.00" aria-label="Auto cash out multiplier"><b>x</b></span></label>
+              <label class="opt"><input class="autoBet" type="checkbox"> Auto bet every round</label>
+            </div>
+            <button class="go" type="button">BET</button>
+          </div>
+        </div>
+
+        <button id="refill" class="btn-n small" type="button" hidden>Get free practice credits</button>
+      </section>
+
+      <aside class="av-right">
+        <div class="s-card box">
+          <div class="box-h"><h2>Bets this round</h2><span id="plCount" class="s-muted small"></span></div>
+          <table class="bets"><thead><tr><th>Player</th><th class="n">Stake</th><th class="n">Cashed out</th></tr></thead><tbody id="betRows"></tbody></table>
+          <p id="betsEmpty" class="s-empty">No bets yet.</p>
+        </div>
+        <div class="s-card box fair">
+          <h2>Provably fair</h2>
+          <p class="s-muted small">Before every flight the server shows a hash of its secret. After the crash it shows the secret, so you can check the crash point was fixed before you bet.</p>
+          <p class="mono small"><span class="s-muted">Round</span> <b id="fRound">–</b></p>
+          <p class="mono small wrapx"><span class="s-muted">Hash</span> <span id="fHash">–</span></p>
+          <p class="mono small wrapx"><span class="s-muted">Previous secret</span> <span id="fSeed">–</span> <b id="fOk"></b></p>
+        </div>
+        <p class="s-muted small">These are practice credits. They are not your bot wallet and cannot be cashed out.</p>
+      </aside>
+    </div>
+  </main>
+
+  <script src="/aviator.js"></script>
+  <script src="/chat.js"></script>
+</body>
+</html>
