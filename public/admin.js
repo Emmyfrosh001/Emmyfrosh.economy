@@ -34,7 +34,9 @@ const ERRORS = {
   id_builtin: 'That ID belongs to a built-in item. Use its Price button instead.',
   not_custom: 'Only goods and coins you created can be removed.',
   chat_not_found: 'That chat is gone. Refresh the list.',
-  empty: 'Type a message first.'
+  empty: 'Type a message first.',
+  bad_difficulty: 'Pick Easy, Normal or Hard.',
+  bad_limits: 'The biggest stake cannot be smaller than the smallest stake.'
 };
 
 async function api(path, method, body) {
@@ -99,6 +101,7 @@ document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () =>
   if (b.dataset.tab === 'accounts') loadAccounts();
   if (b.dataset.tab === 'coupons') loadCoupons();
   if (b.dataset.tab === 'activity') loadActivity();
+  if (b.dataset.tab === 'game') loadGame(true);
 }));
 
 function refreshAll() { loadOverview(); loadUsers(); loadMarket(); loadCoupons(); loadActivity(); loadChats(); }
@@ -438,6 +441,61 @@ async function loadCoupons() {
     });
   } catch (e) { if (e.message !== 'not_logged_in') say(e); }
 }
+
+// ── crash plane game ────────────────────────────────────────────
+const DIFF_TEXT = {
+  easy: 'Players win more often. The house keeps about 1% of all stakes.',
+  normal: 'Balanced. The house keeps about 5% of all stakes.',
+  hard: 'Players lose more often. The house keeps about 12% of all stakes, and about 1 round in 8 crashes instantly.'
+};
+async function loadGame(fillForm) {
+  try {
+    const j = await api('/admin/api/game');
+    const sel = $('gDiff');
+    if (!sel.options.length) {
+      Object.entries(j.difficulties).forEach(([k, v]) => sel.append(new Option(`${v.label} (house keeps ${Math.round(v.edge * 100)}%)`, k)));
+    }
+    if (fillForm) {
+      sel.value = j.settings.difficulty;
+      $('gOn').value = j.settings.enabled ? '1' : '0';
+      $('gMin').value = String(j.settings.minBet);
+      $('gMax').value = j.settings.maxBet ? String(j.settings.maxBet) : '';
+    }
+    $('gDiffNote').textContent = DIFF_TEXT[sel.value] || '';
+    const box = $('gStats'); box.replaceChildren();
+    const st = j.stats;
+    [
+      ['Mode now', j.difficulties[j.settings.difficulty].label + (j.settings.enabled ? '' : ' (game is OFF)')],
+      ['Watching now', fmt(j.watching)],
+      ['Bets this round', fmt(j.round.bets)],
+      ['Total staked', '$' + fmt(st.staked)],
+      ['Total paid to players', '$' + fmt(st.paid)],
+      [st.houseNet >= 0 ? 'House is up' : 'House is down', '$' + fmt(Math.abs(st.houseNet))]
+    ].forEach(([k, v]) => { const d = el('div', 'stat'); d.append(el('span', 'stat-v', v), el('span', 'stat-k', k)); box.append(d); });
+    const body = $('gWait'); body.replaceChildren();
+    $('gWaitEmpty').hidden = j.waiting.length > 0;
+    j.waiting.forEach(w => {
+      const tr = el('tr');
+      const status = w.sent ? 'Sent to bot' : (w.tries ? `Bot could not apply it yet (tried ${w.tries}×), retrying` : 'Will be sent in a moment');
+      tr.append(td(w.name, 'name'), td((w.amount > 0 ? '+' : '−') + '$' + fmt(Math.abs(w.amount)), 'n'), td(status));
+      body.append(tr);
+    });
+  } catch (e) { if (e.message !== 'not_logged_in') say(e); }
+}
+$('gDiff').addEventListener('change', () => { $('gDiffNote').textContent = DIFF_TEXT[$('gDiff').value] || ''; });
+$('gameForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    await api('/admin/api/game', 'POST', { difficulty: $('gDiff').value, enabled: $('gOn').value === '1', minBet: $('gMin').value, maxBet: $('gMax').value });
+    toast('Game settings saved. A new difficulty starts with the next round.');
+    loadGame(true); loadActivity();
+  } catch (err) { say(err); }
+});
+$('gReset').addEventListener('click', async () => {
+  if (!confirm('Reset the staked / paid totals to zero? Player wallets are not touched.')) return;
+  try { await api('/admin/api/game/reset-stats', 'POST'); toast('Totals reset.'); loadGame(); } catch (err) { say(err); }
+});
+setInterval(() => { if (!$('dashView').hidden && !document.hidden && !$('tab-game').hidden) loadGame(); }, 5000);
 
 // ── activity ────────────────────────────────────────────────────
 const STATUS = { pending: 'Waiting for bot', sent: 'Sent to bot', done: 'Applied', failed: 'Failed', cancelled: 'Cancelled', expired: 'Expired' };
