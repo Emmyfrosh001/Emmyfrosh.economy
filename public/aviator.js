@@ -9,13 +9,23 @@ const ERR = {
   bad_amount: 'Enter a valid stake (1 or more).',
   bad_auto: 'Auto cash out must be 1.01x or more.',
   already_bet: 'This panel already has a bet.',
-  insufficient: 'Not enough credits for that stake.',
+  insufficient: 'Not enough money in your wallet for that stake.',
+  no_money: 'Your wallet is empty. You can play again when you have money.',
+  no_wallet: 'Your wallet was not found yet. Use the bot once, then try again.',
+  game_off: 'The game is closed right now.',
+  below_min: 'That stake is below the minimum.',
+  above_max: 'That stake is above the maximum.',
   no_bet: 'There is no bet to do that with.',
   too_late: 'Too late. The plane already flew away.',
   rate_limited: 'Slow down a little and try again.',
-  not_needed: 'You still have credits.',
   bad_request: 'Something went wrong. Refresh the page.'
 };
+function errText(code) {
+  const lim = S && S.limits;
+  if (code === 'below_min' && lim) return 'The minimum stake is ' + fmt(lim.min) + '.';
+  if (code === 'above_max' && lim) return 'The maximum stake is ' + fmt(lim.max) + '.';
+  return ERR[code];
+}
 
 async function api(path, body) {
   const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify(body || {}) });
@@ -93,7 +103,12 @@ function onSnap(s) {
   const me = !!s.me;
   $('balChip').hidden = !me; $('hdLogin').hidden = me; $('hdSignup').hidden = me; $('loginNote').hidden = me;
   if (me) $('bal').textContent = fmt(s.me.balance);
-  $('refill').hidden = !(me && s.me.balance < 100 && !s.me.bets.length);
+  // empty wallet = no game (a bet that is still in the air keeps its panel until it ends)
+  const broke = me && s.me.balance < 1 && !s.me.bets.length;
+  $('noMoney').hidden = !(broke && !s.off);
+  $('nmTitle').textContent = me && !s.me.wallet ? 'Your wallet was not found yet.' : 'Your wallet is empty.';
+  $('nmText').textContent = me && !s.me.wallet ? 'Use the bot once so the site can see your money, then come back.' : 'You can play again as soon as you have money.';
+  $('closedNote').hidden = !s.off;
 
   renderHist(); renderBets(); renderFairHead();
   autoBets();
@@ -152,6 +167,8 @@ function panelState(i) {
   if (live && S.phase === 'waiting') return { text: 'CANCEL', sub: fmt(live.amount) + ' staked', cls: 'cancel', act: 'cancel' };
   if (live && live.cashed != null) return { text: 'WON +' + fmt(live.win), sub: 'cashed out at ' + live.cashed.toFixed(2) + 'x', cls: 'won', act: null };
   if (live) return { text: 'LOST', sub: '−' + fmt(live.amount), cls: 'lost', act: null };
+  if (S.off) return { text: 'GAME CLOSED', act: null, cls: 'lost' };
+  if (me.balance < 1) return { text: 'NO MONEY', sub: me.wallet ? 'your wallet is empty' : 'wallet not found yet', act: null, cls: 'lost' };
   const amt = parseAmt(panels[i].amt.value);
   return S.phase === 'waiting'
     ? { text: 'BET', sub: amt ? fmt(amt) : '', act: 'bet' }
@@ -192,8 +209,8 @@ async function placeBet(i, quiet) {
     const r = await api('/aviator/bet', { slot: i, amount, auto });
     if (S && S.me) { S.me.balance = r.balance; S.me.bets.push({ slot: i, amount, auto, cashed: null, win: null, next: S.phase !== 'waiting' }); $('bal').textContent = fmt(r.balance); }
   } catch (e) {
-    if (quiet && e.message === 'insufficient') p.autoBet.checked = false;
-    toast(ERR[e.message] || 'Could not place the bet.', true);
+    if (quiet && ['insufficient', 'no_money', 'game_off', 'above_max', 'below_min'].includes(e.message)) { p.autoBet.checked = false; savePrefs(); }
+    toast(errText(e.message) || 'Could not place the bet.', true);
   } finally { pending[i] = false; renderPanels(true); }
 }
 
@@ -237,7 +254,7 @@ panels.forEach((p, i) => {
   p.el.addEventListener('click', (e) => {
     const t = e.target.closest('button'); if (!t || t === p.go) return;
     const cur = parseAmt(p.amt.value) || 0;
-    if (t.dataset.set) p.amt.value = t.dataset.set === 'max' ? String(Math.max(1, balance())) : t.dataset.set;
+    if (t.dataset.set) p.amt.value = t.dataset.set === 'max' ? String(Math.max(1, S && S.limits && S.limits.max ? Math.min(balance(), S.limits.max) : balance())) : t.dataset.set;
     else if (t.dataset.act === 'plus') p.amt.value = String(Math.max(1, cur + stepFor(cur)));
     else if (t.dataset.act === 'minus') p.amt.value = String(Math.max(1, cur - stepFor(cur - 1)));
     savePrefs(); renderPanels(true);
@@ -248,11 +265,6 @@ panels.forEach((p, i) => {
 });
 // +/- steps grow with the stake so any amount is quick to reach
 function stepFor(n) { return n >= 1e6 ? 100000 : n >= 1e5 ? 10000 : n >= 1e4 ? 1000 : n >= 1e3 ? 100 : n >= 100 ? 10 : 1; }
-
-$('refill').addEventListener('click', async () => {
-  try { const r = await api('/aviator/refill', {}); if (S && S.me) S.me.balance = r.balance; $('bal').textContent = fmt(r.balance); $('refill').hidden = true; toast('Practice credits added.'); }
-  catch (e) { toast(ERR[e.message] || 'Could not add credits.', true); }
-});
 
 // ── canvas ──────────────────────────────────────────────────
 const cv = $('cv'), g = cv.getContext('2d');
