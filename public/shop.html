@@ -13,7 +13,7 @@
   <header class="topbar">
     <div class="wrap topbar-in">
       <a class="back" href="/" aria-label="Leaderboard">&#8592;</a>
-      <div class="brand"><span>EMMYFROSH-<span class="ai">AI</span></span></div>
+      <div class="brand"><span class="bname">𝛯𝛭𝛭𝑌𝐹𝑅𝛩𝑆𝛨 💔</span></div>
       <span class="grow"></span>
       <a id="hdLogin" class="btn-n small ghost-n" href="/login?next=%2Fshop" hidden>Log in</a>
       <a id="hdSignup" class="btn-n small" href="/signup?next=%2Fshop" hidden>Sign up</a>
@@ -35,6 +35,7 @@
       <button class="s-tab" data-tab="market" type="button" role="tab">Market</button>
       <button class="s-tab" data-tab="rates" type="button" role="tab">Rates</button>
       <button class="s-tab" data-tab="wallet" type="button" role="tab" id="walletTab" hidden>Wallet</button>
+      <button class="s-tab" data-tab="inv" type="button" role="tab" id="invTab" hidden>Inventory</button>
       <button class="s-tab" data-tab="orders" type="button" role="tab" id="ordersTab" hidden>My orders</button>
     </nav>
 
@@ -91,6 +92,12 @@
       <p id="xferEmpty" class="s-empty" hidden>No transfers yet.</p>
     </section>
 
+    <section id="tab-inv" class="s-panel" hidden>
+      <h2 class="s-h2">My inventory</h2>
+      <div id="invList" class="order-list"></div>
+      <p id="invEmpty" class="s-empty" hidden></p>
+    </section>
+
     <section id="tab-orders" class="s-panel" hidden>
       <div id="orderList" class="order-list"></div>
       <p id="ordersEmpty" class="s-empty" hidden>No orders yet.</p>
@@ -126,6 +133,8 @@
       </div>
     </div>
   </div>
+
+  <footer class="foot foot-mini"><p class="built">Built by 𝛯𝛭𝛭𝑌𝐹𝑅𝛩𝑆𝛨 💔</p></footer>
 
   <script src="/shop.js"></script>
   <script src="/chat.js"></script>
