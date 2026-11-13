@@ -609,3 +609,12 @@ a.btn-n { display: inline-block; text-decoration: none; text-align: center; }
   .auth-links { gap: 6px; }
   .auth-links .btn-n.small, .topbar-in > .btn-n.small { padding: 6px 9px; font-size: .78rem; }
 }
+
+/* brand name, built-by line, tabs that scroll when there are many */
+.bname { font-style: italic; font-weight: 800; letter-spacing: .02em; white-space: nowrap; }
+.built { margin: 10px 0 0; font-size: .95rem; font-weight: 800; color: #cfe0ff; letter-spacing: .02em; }
+.foot-mini { margin-top: 30px; padding: 16px 16px 24px; }
+.foot-mini .built { margin: 0; }
+.s-tabs { overflow-x: auto; scrollbar-width: none; }
+.s-tabs::-webkit-scrollbar { display: none; }
+.s-tab { flex: 1 0 auto; padding-left: 12px; padding-right: 12px; }
