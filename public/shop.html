@@ -15,58 +15,14 @@
       <a class="back" href="/" aria-label="Leaderboard">&#8592;</a>
       <div class="brand"><span>EMMYFROSH-<span class="ai">AI</span></span></div>
       <span class="grow"></span>
+      <a id="hdLogin" class="btn-n small ghost-n" href="/login?next=%2Fshop" hidden>Log in</a>
+      <a id="hdSignup" class="btn-n small" href="/signup?next=%2Fshop" hidden>Sign up</a>
       <button id="logoutBtn" class="btn small ghost-n" type="button" hidden>Log out</button>
     </div>
   </header>
 
   <main class="wrap">
     <p id="toast" class="s-toast" role="status" hidden></p>
-
-    <!-- LOGIN / SIGN UP -->
-    <section id="loginView" class="s-card login-n" hidden>
-      <div class="s-tabs auth-tabs" role="tablist">
-        <button class="s-tab on" id="authLogin" type="button" role="tab">Log in</button>
-        <button class="s-tab" id="authSignup" type="button" role="tab">Create account</button>
-      </div>
-
-      <form id="loginForm" autocomplete="on">
-        <p class="s-muted">Use your WhatsApp number and your password.</p>
-        <label for="num">WhatsApp number</label>
-        <input id="num" name="username" type="tel" inputmode="tel" autocomplete="username" placeholder="2348012345678" required>
-        <label for="pw">Password</label>
-        <input id="pw" name="password" type="password" autocomplete="current-password" required>
-        <button class="btn-n" type="submit">Log in</button>
-        <p id="loginErr" class="s-err" role="alert" hidden></p>
-        <div class="s-help">
-          <strong>Forgot your password?</strong>
-          <span>For safety, passwords can't be reset on the site or in the bot. Tap the button (or the round chat bubble) to chat with customer care — no login needed — and they will reset it for you.</span>
-          <button class="btn-n small" id="forgotChat" type="button">💬 Chat with customer care</button>
-        </div>
-      </form>
-
-      <form id="signupForm" autocomplete="off" hidden>
-        <p class="s-muted">Pick a password, then confirm your number once in WhatsApp.</p>
-        <label for="sNum">WhatsApp number</label>
-        <input id="sNum" type="tel" inputmode="tel" placeholder="2348012345678" required>
-        <label for="sPw">Password <span class="s-muted small">(6–40 characters, no spaces)</span></label>
-        <input id="sPw" type="password" autocomplete="new-password" minlength="6" maxlength="40" required>
-        <label for="sPw2">Repeat password</label>
-        <input id="sPw2" type="password" autocomplete="new-password" minlength="6" maxlength="40" required>
-        <button class="btn-n" type="submit">Create account</button>
-        <p id="signupErr" class="s-err" role="alert" hidden></p>
-        <p class="s-muted small">Already made an account and forgot the password? <button id="signupHelp" class="s-link" type="button">Chat with customer care</button></p>
-      </form>
-
-      <div id="verifyBox" class="s-help ok" hidden>
-        <strong>Almost done — confirm your number</strong>
-        <span>Open a <em>private</em> chat with the bot on WhatsApp (from the same number) and send:</span>
-        <code id="verifyCode"></code>
-        <span>The code works for <span id="verifyMins">60</span> minutes. After the bot says “verified”, come back and log in (about 30 seconds).</span>
-        <button id="verifyDone" class="btn-n small" type="button">I sent it — go to log in</button>
-      </div>
-
-      <p class="s-muted small">You can still look at the shop below without logging in.</p>
-    </section>
 
     <!-- ACCOUNT BAR -->
     <section id="meBar" class="s-card me-bar" hidden>
@@ -144,6 +100,18 @@
   </main>
 
   <!-- BUY DIALOG -->
+  <div id="loginModal" class="modal" hidden>
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="loginModalTitle">
+      <h2 id="loginModalTitle">Log in to buy</h2>
+      <p class="s-muted">You need an account to buy. Log in with your WhatsApp number, or create an account in a minute.</p>
+      <div class="modal-stack">
+        <a class="btn-n" href="/login?next=%2Fshop">Log in</a>
+        <a class="btn-n ghost-n" href="/signup?next=%2Fshop">Create account</a>
+        <button id="loginModalClose" class="s-link" type="button">Not now</button>
+      </div>
+    </div>
+  </div>
+
   <div id="buyModal" class="modal" hidden>
     <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="buyTitle">
       <h2 id="buyTitle"></h2>
