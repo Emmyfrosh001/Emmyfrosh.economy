@@ -615,6 +615,6 @@ a.btn-n { display: inline-block; text-decoration: none; text-align: center; }
 .built { margin: 10px 0 0; font-size: .95rem; font-weight: 800; color: #cfe0ff; letter-spacing: .02em; }
 .foot-mini { margin-top: 30px; padding: 16px 16px 24px; }
 .foot-mini .built { margin: 0; }
-.s-tabs { overflow-x: auto; scrollbar-width: none; }
-.s-tabs::-webkit-scrollbar { display: none; }
-.s-tab { flex: 1 0 auto; padding-left: 12px; padding-right: 12px; }
+/* tabs wrap onto a second row instead of being cut off (3 per row) */
+.s-tabs { flex-wrap: wrap; overflow: visible; }
+.s-tab { flex: 1 1 calc(33% - 8px); min-width: 0; padding-left: 8px; padding-right: 8px; }
