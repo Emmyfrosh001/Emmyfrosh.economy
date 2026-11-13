@@ -250,6 +250,17 @@ function findPlayer(key, jid) {
   if (key && key.length >= 7) for (const src of srcs) for (const id of Object.keys(src)) if (last10(id) === key) return { jid: id, w: src[id] };
   return null;
 }
+// a player's inventory as the bot sends it: [{name, qty}] or {name: qty}
+function normInv(v) {
+  const rows = Array.isArray(v) ? v : (v && typeof v === 'object' ? Object.entries(v).map(([k, q]) => ({ name: k, qty: q })) : []);
+  const out = [];
+  for (const x of rows.slice(0, 100)) {
+    const name = String((x && (x.name || x.key || x.item)) || '').slice(0, 60);
+    const qty = Math.floor(Number(x && x.qty !== undefined ? x.qty : x && x.count));
+    if (name && Number.isFinite(qty) && qty > 0) out.push({ name, qty: Math.min(qty, 1e15) });
+  }
+  return out;
+}
 function queueAdj(user, name, op, amount, t, leg, field) {
   db.adjustments.unshift({
     id: crypto.randomBytes(6).toString('hex'), user, name: String(name || 'Player').slice(0, 60),
@@ -343,6 +354,7 @@ async function route(req, res) {
           balance: num0(u.balance), bank: num0(u.bank), gams: num0(u.gams),
           level: Math.max(1, num0(u.level)), job: String(u.job || 'Unemployed').slice(0, 40)
         };
+        if (u.inv !== undefined) users[id].inv = normInv(u.inv);
       }
       db.users = users;
       db.usersUpdatedAt = Date.now();
@@ -388,8 +400,11 @@ async function route(req, res) {
       }
       if (body.balances && typeof body.balances === 'object') {
         const bal = {};
-        for (const [jid, b] of Object.entries(body.balances).slice(0, 20000))
-          bal[jid.slice(0, 100)] = { balance: int(b?.balance), bank: int(b?.bank), level: Math.max(1, int(b?.level)), name: str(b?.name || 'Player', 60) };
+        for (const [jid, b] of Object.entries(body.balances).slice(0, 20000)) {
+          const k = jid.slice(0, 100);
+          bal[k] = { balance: int(b?.balance), bank: int(b?.bank), level: Math.max(1, int(b?.level)), name: str(b?.name || 'Player', 60) };
+          if (b && b.inv !== undefined) bal[k].inv = normInv(b.inv);   // inventory, if the bot sends it
+        }
         db.balances = bal;
       }
       save();
@@ -600,7 +615,7 @@ async function route(req, res) {
           closedUntil: l.closedUntil > now ? l.closedUntil : 0, expiresAt: l.expiresAt,
           mine: !!(acc && l.seller_id && l.seller_id === acc.jid)
         })),
-        me: acc ? { name: (bal && bal.name) || acc.name, number: acc.number, balance: bal ? bal.balance : 0, bank: bal ? bal.bank : 0, level: bal ? bal.level : 1 } : null
+        me: acc ? { name: (bal && bal.name) || acc.name, number: acc.number, balance: bal ? bal.balance : 0, bank: bal ? bal.bank : 0, level: bal ? bal.level : 1, inventory: pl ? (Array.isArray(pl.w.inv) ? pl.w.inv : (Array.isArray((db.users[pl.jid] || {}).inv) ? db.users[pl.jid].inv : null)) : null } : null
       });
     }
 
