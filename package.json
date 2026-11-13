@@ -7,7 +7,12 @@
     "start": "node server.js",
     "setup": "node setup.js"
   },
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "license": "UNLICENSED",
-  "private": true
+  "private": true,
+  "dependencies": {
+    "mongodb": "^6.8.0"
+  }
 }
