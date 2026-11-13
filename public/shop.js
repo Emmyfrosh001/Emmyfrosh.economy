@@ -159,7 +159,7 @@ function setTab(t) {
   tab = t;
   document.querySelectorAll('.s-tab[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   document.querySelectorAll('.s-panel').forEach(p => { p.hidden = p.id !== 'tab-' + t; });
-  $('q').parentElement.hidden = t === 'orders' || t === 'wallet' || t === 'inv';
+  $('q').parentElement.hidden = t === 'orders' || t === 'wallet' || t === 'inv' || t === 'games';
   if (t === 'orders') loadOrders();
   if (t === 'wallet') { loadTransfers(); load(); }
   if (t === 'inv') { renderInv(); load(); }
