@@ -594,3 +594,18 @@ a.btn-n, button.btn-n { text-decoration: none; }
 .cc-zoom-btn { font: inherit; font-weight: 800; font-size: .78rem; cursor: pointer; padding: 5px 10px; border-radius: 8px; color: #fff; background: transparent; border: 1.5px solid #2a5bd7; }
 .cc-zoom.hot .cc-zoom-btn { color: #04123a; background: linear-gradient(#5ff0ff, #2ea8ff); border-color: transparent; }
 .cc-m a { color: inherit; text-decoration: underline; font-weight: 800; overflow-wrap: anywhere; }
+
+/* login / sign up buttons on the right of the top bar, login-needed popup */
+[hidden] { display: none !important; }
+.topbar-in .grow { flex: 1; }
+.auth-links { display: flex; gap: 8px; align-items: center; }
+a.btn-n { display: inline-block; text-decoration: none; text-align: center; }
+.modal-stack { display: grid; gap: 10px; margin-top: 6px; }
+.modal-stack .s-link { justify-self: center; }
+@media (max-width: 420px) {
+  .brand { font-size: 1.05rem; gap: 6px; }
+  .brand .ic { font-size: 1.6rem; }
+  .topbar-in { gap: 6px; }
+  .auth-links { gap: 6px; }
+  .auth-links .btn-n.small, .topbar-in > .btn-n.small { padding: 6px 9px; font-size: .78rem; }
+}
