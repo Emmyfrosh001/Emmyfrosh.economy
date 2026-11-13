@@ -54,6 +54,7 @@ if (!db.market || typeof db.market !== 'object') db.market = { shop: [], coins: 
 for (const k of ['shop', 'coins', 'listings']) if (!Array.isArray(db.market[k])) db.market[k] = [];
 for (const k of ['adjustments', 'audit', 'jobs']) if (!Array.isArray(db[k])) db[k] = [];
 if (!db.chats || typeof db.chats !== 'object') db.chats = {};   // live chat: visitors <-> customer care
+if (!Array.isArray(db.transfers)) db.transfers = [];            // player -> player money transfers made on the site
 
 function save() {
   const tmp = DB_FILE + '.tmp';
@@ -240,6 +241,45 @@ function newJob(fields) {
   return j;
 }
 
+// ── wallet + transfers ──────────────────────────────────────────
+// find a player by WhatsApp number (last 10 digits) or by the bot's id. Looks in the
+// fast balance feed first, then in the leaderboard feed, so the wallet is never blank.
+function findPlayer(key, jid) {
+  const srcs = [db.balances, db.users];
+  if (jid) for (const src of srcs) if (src[jid]) return { jid, w: src[jid] };
+  if (key && key.length >= 7) for (const src of srcs) for (const id of Object.keys(src)) if (last10(id) === key) return { jid: id, w: src[id] };
+  return null;
+}
+function queueAdj(user, name, op, amount, t, leg, field) {
+  db.adjustments.unshift({
+    id: crypto.randomBytes(6).toString('hex'), user, name: String(name || 'Player').slice(0, 60),
+    field: field || 'balance', op, amount, status: 'pending', createdAt: Date.now(), by: 'site', transferId: t.id, leg
+  });
+  if (db.adjustments.length > 1000) db.adjustments.length = 1000;
+}
+// the bot reports each leg of a transfer: take the money first, give it only after that worked
+function transferLeg(a, ok, r) {
+  const t = db.transfers.find(x => x.id === a.transferId);
+  if (!t) return;
+  const now = Date.now();
+  const fF = t.fromField || 'balance', tF = t.toField || 'balance';   // deposit/withdraw move money between wallet and bank
+  const bump = (jid, field, delta) => {
+    if (field === 'balance' && Number.isFinite(Number(r && r.balance))) return;   // the bot already told us the new balance
+    for (const src of [db.balances, db.users]) if (src[jid]) src[jid][field] = Math.max(0, (src[jid][field] || 0) + delta);
+  };
+  if (a.leg === 'debit') {
+    if (ok) { bump(t.from, fF, -t.amount); t.status = 'crediting'; queueAdj(t.to, t.toName, 'add', t.amount, t, 'credit', tF); }
+    else { t.status = 'failed'; t.error = String((r && r.error) || 'failed').slice(0, 80); t.doneAt = now; }
+  } else if (a.leg === 'credit') {
+    if (ok) { bump(t.to, tF, t.amount); t.status = 'done'; t.doneAt = now; }
+    else { t.status = 'refunding'; t.error = 'credit_failed'; queueAdj(t.from, t.fromName, 'add', t.amount, t, 'refund', fF); }
+  } else if (a.leg === 'refund') {
+    if (ok) bump(t.from, fF, t.amount);
+    t.status = 'failed'; t.error = ok ? 'refunded' : 'refund_failed'; t.doneAt = now;
+    if (!ok) addAudit('site', 'transfer_refund_failed', `${t.amount} to ${t.fromName} (transfer ${t.id})`);
+  }
+}
+
 // ── routing ─────────────────────────────────────────────────────
 const FIELDS = ['balance', 'bank', 'gams'];
 const OPS    = ['add', 'remove', 'set'];
@@ -372,6 +412,12 @@ async function route(req, res) {
       const jobs = [];
       for (const a of db.adjustments) {
         if (jobs.length >= 50) break;
+        if (a.transferId && a.leg === 'debit' && a.status === 'pending' && now - a.createdAt > 600000) {
+          a.status = 'cancelled';   // bot was offline for 10 minutes: drop the transfer, nobody was charged
+          const t = db.transfers.find(x => x.id === a.transferId);
+          if (t && t.status === 'debiting') { t.status = 'failed'; t.error = 'bot_offline'; t.doneAt = now; }
+          continue;
+        }
         const redeliver = a.status === 'sent' && now - (a.sentAt || 0) > 180000;
         if (a.status === 'pending' || redeliver) {
           a.status = 'sent'; a.sentAt = now;
@@ -408,6 +454,7 @@ async function route(req, res) {
           a.balanceAfter = Math.floor(Number(r.balance));
           if (a.user && db.balances[a.user]) db.balances[a.user].balance = a.balanceAfter;
         }
+        if (a.transferId) transferLeg(a, !!r.ok, r);
       }
       save();
       return send(res, 200, { ok: true });
@@ -485,13 +532,17 @@ async function route(req, res) {
 
   // ─────────── players: login + shop ───────────
   if (p === '/shop/login' && req.method === 'POST') {
-    if (hit('ulogin', ip, 12, 15 * 60000)) return send(res, 429, { ok: false, error: 'too_many_attempts' });
+    const MAXTRY = parseInt(process.env.LOGIN_ATTEMPTS, 10) || 8;
+    if (peek('ulogin', ip, 12, 15 * 60000)) return send(res, 429, { ok: false, error: 'too_many_attempts' });
     const body = await readBody(req);
     const key = last10(body.number);
-    if (key.length >= 7 && hit('unum', key, parseInt(process.env.LOGIN_ATTEMPTS, 10) || 8, 15 * 60000)) return send(res, 429, { ok: false, error: 'too_many_attempts' });
+    if (key.length >= 7 && peek('unum', key, MAXTRY, 15 * 60000)) return send(res, 429, { ok: false, error: 'too_many_attempts' });
     const acc = key.length >= 7 ? db.accounts[key] : null;
     const good = checkPass(acc && acc.hash, body.password) && !!acc;   // always runs scrypt
     if (!good) {
+      // only WRONG attempts count toward the lockout (good logins used to eat the allowance)
+      hit('ulogin', ip, 12, 15 * 60000);
+      if (key.length >= 7) hit('unum', key, MAXTRY, 15 * 60000);
       // right password but not verified in WhatsApp yet? say so (only with the correct password)
       const pend = Object.values(db.signups).find(x => x.number === key && Date.now() - x.createdAt < SIGNUP_TTL);
       if (!acc && pend && checkPass(pend.hash, body.password)) return send(res, 403, { ok: false, error: 'not_verified' });
@@ -539,7 +590,8 @@ async function route(req, res) {
 
     if (p === '/shop/api/state') {
       const now = Date.now();
-      const bal = acc ? db.balances[acc.jid] : null;
+      const pl = acc ? findPlayer(acc.number, acc.jid) : null;
+      const bal = pl ? pl.w : null;
       const m = db.market;
       return send(res, 200, {
         ok: true, siteName: SITE_NAME, updatedAt: m.updatedAt, shop: m.shop, coins: m.coins,
@@ -553,6 +605,92 @@ async function route(req, res) {
     }
 
     if (!acc) return send(res, 401, { ok: false, error: 'not_logged_in' });
+
+    // ── deposit (wallet → bank) and withdraw (bank → wallet) ──
+    if (p === '/shop/api/bank' && req.method === 'POST') {
+      if (hit('bank', acc.number, 10, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
+      const b = await readBody(req);
+      const op = String(b.op || '');
+      if (op !== 'deposit' && op !== 'withdraw') return send(res, 400, { ok: false, error: 'bad_op' });
+      const me = findPlayer(acc.number, acc.jid);
+      if (!me) return send(res, 404, { ok: false, error: 'player_not_found' });
+      const fF = op === 'deposit' ? 'balance' : 'bank', tF = op === 'deposit' ? 'bank' : 'balance';
+      if (db.transfers.some(t => t.from === me.jid && t.to === me.jid && t.status === 'debiting')) return send(res, 429, { ok: false, error: 'too_many_pending' });
+      const committed = db.transfers.filter(t => t.from === me.jid && t.status === 'debiting' && (t.fromField || 'balance') === fF).reduce((s, t) => s + t.amount, 0);
+      const have = Math.max(0, (me.w[fF] || 0) - committed);
+      const all = String(b.amount).toLowerCase() === 'all';
+      const amount = all ? have : Number(String(b.amount ?? '').replace(/[,$\s]/g, ''));
+      if (!Number.isInteger(amount) || amount < 1 || amount > 1e12) return send(res, 400, { ok: false, error: all ? 'nothing_to_move' : 'bad_amount' });
+      if (amount > have) return send(res, 400, { ok: false, error: 'insufficient', need: amount, have });
+      const t = {
+        id: crypto.randomBytes(6).toString('hex'), owner: acc.number, toKey: acc.number, kind: op,
+        from: me.jid, fromName: me.w.name || acc.name, to: me.jid, toName: me.w.name || acc.name,
+        fromField: fF, toField: tF, amount, status: 'debiting', createdAt: Date.now()
+      };
+      db.transfers.unshift(t);
+      if (db.transfers.length > 2000) db.transfers.length = 2000;
+      queueAdj(me.jid, t.fromName, 'remove', amount, t, 'debit', fF);
+      addAudit('site:' + acc.number, op, `${amount} ${t.fromName}`);
+      save();
+      return send(res, 200, { ok: true, id: t.id });
+    }
+
+    // ── wallet: look up who you are about to pay, send money, see transfers ──
+    if (p === '/shop/api/lookup' && req.method === 'GET') {
+      if (hit('lookup', acc.number, 30, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
+      const key = last10(url.searchParams.get('number'));
+      if (key.length < 10) return send(res, 400, { ok: false, error: 'bad_number' });
+      if (key === acc.number) return send(res, 400, { ok: false, error: 'self' });
+      const to = findPlayer(key, (db.accounts[key] || {}).jid);
+      if (!to) return send(res, 404, { ok: false, error: 'recipient_not_found' });
+      return send(res, 200, { ok: true, name: to.w.name || 'Player' });
+    }
+
+    if (p === '/shop/api/send' && req.method === 'POST') {
+      if (hit('send', acc.number, 10, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
+      const b = await readBody(req);
+      const key = last10(b.number);
+      const amount = Number(String(b.amount ?? '').replace(/[,$\s]/g, ''));
+      if (key.length < 10) return send(res, 400, { ok: false, error: 'bad_number' });
+      if (!Number.isInteger(amount) || amount < 1 || amount > 1e12) return send(res, 400, { ok: false, error: 'bad_amount' });
+      if (key === acc.number) return send(res, 400, { ok: false, error: 'self' });
+      const from = findPlayer(acc.number, acc.jid);
+      if (!from) return send(res, 404, { ok: false, error: 'player_not_found' });
+      const to = findPlayer(key, (db.accounts[key] || {}).jid);
+      if (!to) return send(res, 404, { ok: false, error: 'recipient_not_found' });
+      if (to.jid === from.jid) return send(res, 400, { ok: false, error: 'self' });
+      const open = db.transfers.filter(t => t.from === from.jid && t.status === 'debiting' && (t.fromField || 'balance') === 'balance');
+      if (open.length >= 3) return send(res, 429, { ok: false, error: 'too_many_pending' });
+      const have = Math.max(0, (from.w.balance || 0) - open.reduce((s, t) => s + t.amount, 0));
+      if (amount > have) return send(res, 400, { ok: false, error: 'insufficient', need: amount, have });
+      const t = {
+        id: crypto.randomBytes(6).toString('hex'), owner: acc.number, toKey: key,
+        from: from.jid, fromName: from.w.name || acc.name, to: to.jid, toName: to.w.name || 'Player',
+        amount, status: 'debiting', createdAt: Date.now()
+      };
+      db.transfers.unshift(t);
+      if (db.transfers.length > 2000) db.transfers.length = 2000;
+      queueAdj(from.jid, t.fromName, 'remove', amount, t, 'debit');
+      addAudit('site:' + acc.number, 'transfer', `${amount} ${t.fromName} → ${t.toName}`);
+      save();
+      return send(res, 200, { ok: true, id: t.id });
+    }
+
+    if (p === '/shop/api/send' && req.method === 'GET') {
+      const t = db.transfers.find(x => x.id === String(url.searchParams.get('id')) && x.owner === acc.number);
+      if (!t) return send(res, 404, { ok: false, error: 'not_found' });
+      const st = t.status === 'done' ? 'done' : t.status === 'failed' ? 'failed' : 'pending';
+      return send(res, 200, { ok: true, status: st, error: t.error || '', name: t.toName, amount: t.amount, kind: t.kind || 'send' });
+    }
+
+    if (p === '/shop/api/transfers') {
+      const items = db.transfers.filter(t => t.owner === acc.number || t.toKey === acc.number).slice(0, 15).map(t => ({
+        id: t.id, kind: t.kind || 'send', dir: t.owner === acc.number ? 'out' : 'in', name: t.owner === acc.number ? t.toName : t.fromName,
+        amount: t.amount, at: t.createdAt,
+        status: t.status === 'done' ? 'done' : t.status === 'failed' ? 'failed' : 'pending', error: t.error || ''
+      }));
+      return send(res, 200, { ok: true, items });
+    }
 
     if (p === '/shop/api/order' && req.method === 'POST') {
       if (hit('order', acc.number, 20, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
@@ -684,7 +822,7 @@ async function route(req, res) {
     if (p === '/admin/api/adjust/cancel' && req.method === 'POST') {
       const b = await readBody(req);
       const a = db.adjustments.find(x => x.id === String(b.id));
-      if (!a || a.status !== 'pending') return send(res, 400, { ok: false, error: 'cannot_cancel' });
+      if (!a || a.status !== 'pending' || a.transferId) return send(res, 400, { ok: false, error: 'cannot_cancel' });
       a.status = 'cancelled';
       addAudit(me, 'cancel_adjust', `${a.op} ${a.amount} ${a.field} → ${a.name}`);
       save();
