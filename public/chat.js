@@ -39,7 +39,11 @@
   const send = el('button', 'cc-send', 'Send'); send.type = 'submit';
   row.append(input, send);
   form.append(nameIn, row);
-  panel.append(head, list, err, form);
+  const zoom = el('div', 'cc-zoom');
+  const zoomTxt = el('span', '', 'Chat taking too long?');
+  const zoomBtn = el('button', 'cc-zoom-btn', 'Request a Zoom call'); zoomBtn.type = 'button';
+  zoom.append(zoomTxt, zoomBtn);
+  panel.append(head, list, err, zoom, form);
   document.body.append(bubble, panel);
 
   const savedName = store('ccName'); if (savedName) nameIn.value = savedName;
@@ -90,6 +94,19 @@
   window.addEventListener('resize', place);
 
   // ── rendering ───────────────────────────────────────────────
+  // only plain http(s) links become tappable (so a Zoom link from customer care can be opened)
+  function linkify(text) {
+    const f = document.createDocumentFragment();
+    const re = /https?:\/\/[^\s<>"']+/g;
+    let last = 0, m;
+    while ((m = re.exec(text))) {
+      if (m.index > last) f.append(text.slice(last, m.index));
+      const a = el('a', '', m[0]); a.href = m[0]; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      f.append(a); last = m.index + m[0].length;
+    }
+    if (last < text.length) f.append(text.slice(last));
+    return f;
+  }
   function hhmm(ts) { return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
   function render() {
     const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 60;
@@ -98,9 +115,11 @@
     list.append(hi);
     msgs.forEach(m => {
       const d = el('div', 'cc-m ' + (m.from === 'admin' ? 'admin' : 'me'));
-      d.append(el('span', '', m.text), el('time', '', hhmm(m.at)));
+      const sp = el('span'); sp.append(linkify(m.text));
+      d.append(sp, el('time', '', hhmm(m.at)));
       list.append(d);
     });
+    zoom.classList.toggle('hot', msgs.length >= 6);   // the chat is getting long: make the Zoom button stand out
     if (nearBottom || lastCount !== msgs.length) list.scrollTop = list.scrollHeight;
     lastCount = msgs.length;
   }
@@ -139,6 +158,10 @@
       showErr(er.message === 'rate_limited' ? 'You are sending too fast. Wait a moment.' : er.message === 'busy' ? 'Chat is busy. Try again soon.' : 'Could not send. Try again.');
     }
     sending = false; send.disabled = false; input.focus();
+  });
+  zoomBtn.addEventListener('click', () => {
+    if (!input.value.trim()) input.value = 'I would like a Zoom call please. My WhatsApp number is: ';
+    autosize(); input.focus();
   });
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } });
   function autosize() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 90) + 'px'; }
