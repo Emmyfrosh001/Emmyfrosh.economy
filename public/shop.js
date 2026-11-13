@@ -72,16 +72,18 @@ async function load() {
   $('logoutBtn').hidden = !me;
   $('ordersTab').hidden = !me;
   $('walletTab').hidden = !me;
+  $('invTab').hidden = !me;
   if (me) {
     $('meName').textContent = me.name; $('meBal').textContent = '$' + fmt(me.balance); $('meBank').textContent = '$' + fmt(me.bank);
     $('wWallet').textContent = '$' + fmt(me.balance); $('wBank').textContent = '$' + fmt(me.bank); $('wTotal').textContent = '$' + fmt((me.balance || 0) + (me.bank || 0));
     if (wantWallet) { wantWallet = false; setTab('wallet'); }
   }
   else if (wantWallet) { location.replace('/login?next=' + encodeURIComponent('/shop#wallet')); return; }   // /shop#wallet while logged out → log in first
-  else if (tab === 'orders' || tab === 'wallet') setTab('shop');
+  else if (tab === 'orders' || tab === 'wallet' || tab === 'inv') setTab('shop');
   $('updated').textContent = state.updatedAt ? 'Updated ' + new Date(state.updatedAt).toLocaleTimeString() : 'Waiting for the bot…';
   render();
   if (tab === 'orders') loadOrders();
+  if (tab === 'inv') renderInv();
   if (tab === 'wallet' && !sending && !moving) loadTransfers();
 }
 
@@ -111,7 +113,7 @@ function render() {
   const items = state.shop.filter(x => hit(x.name) || hit(x.key));
   $('shopEmpty').hidden = items.length > 0;
   items.forEach(x => sg.append(card(x.name, x.out ? 'Out of stock — try the market' : '', '$' + fmt(x.price),
-    me ? 'Buy' : 'Log in', () => me ? openBuy({ kind: 'shop', ref: x.key, name: x.name, price: x.price }) : needLogin(),
+    'Buy', () => me ? openBuy({ kind: 'shop', ref: x.key, name: x.name, price: x.price }) : needLogin(),
     { off: x.out, badge: x.out ? 'Out' : '', badgeCls: 'out' })));
 
   const mg = $('marketGrid'); mg.replaceChildren();
@@ -122,7 +124,7 @@ function render() {
     const closed = l.closedUntil > Date.now();
     const sub = `${fmt(l.qty)} left · ${l.seller}` + (closed ? ` · opens in ${left(l.closedUntil)}` : '');
     mg.append(card(l.name, sub, '$' + fmt(l.price) + ' each',
-      l.mine ? 'Yours' : (me ? 'Buy' : 'Log in'),
+      l.mine ? 'Yours' : 'Buy',
       () => me ? openBuy({ kind: 'market', ref: l.id, name: l.name, price: l.price, max: l.qty, seller: l.seller }) : needLogin(),
       { off: closed || l.mine, badge: closed ? 'Closed' : '', badgeCls: 'out' }));
   });
@@ -157,9 +159,10 @@ function setTab(t) {
   tab = t;
   document.querySelectorAll('.s-tab[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   document.querySelectorAll('.s-panel').forEach(p => { p.hidden = p.id !== 'tab-' + t; });
-  $('q').parentElement.hidden = t === 'orders' || t === 'wallet';
+  $('q').parentElement.hidden = t === 'orders' || t === 'wallet' || t === 'inv';
   if (t === 'orders') loadOrders();
   if (t === 'wallet') { loadTransfers(); load(); }
+  if (t === 'inv') { renderInv(); load(); }
 }
 document.querySelectorAll('.s-tab[data-tab]').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
 $('q').addEventListener('input', render);
@@ -179,6 +182,21 @@ async function loadOrders() {
       box.append(r);
     });
   } catch {}
+}
+
+// ── inventory ─────────────────────────────────────────────────
+function renderInv() {
+  const inv = state && state.me ? state.me.inventory : null;
+  const box = $('invList'); box.replaceChildren();
+  const empty = $('invEmpty');
+  if (inv === null || inv === undefined) { empty.textContent = 'Your inventory is not available yet. It will show here soon.'; empty.hidden = false; return; }
+  empty.textContent = 'Your inventory is empty. Buy something from the Shop or Market.';
+  empty.hidden = inv.length > 0;
+  inv.forEach(x => {
+    const r = el('div', 'order');
+    r.append(el('strong', '', x.name), el('span', 's-muted', '× ' + fmt(x.qty)));
+    box.append(r);
+  });
 }
 
 // ── wallet: send money ────────────────────────────────────────
