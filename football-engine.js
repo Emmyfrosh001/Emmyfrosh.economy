@@ -91,8 +91,9 @@ module.exports = function createFootball(opts) {
   if (!store.recent || typeof store.recent !== 'object') store.recent = {};
   if (!Array.isArray(store.history)) store.history = [];
   store.settings = cleanSettings(store.settings);
-  const real = store.real = Object.assign({ events: {}, bets: [], lastFetch: 0, lastError: '', credits: null, diag: {}, stats: { staked: 0, paid: 0 } }, store.real || {});
+  const real = store.real = Object.assign({ events: {}, bets: [], lastFetch: 0, lastError: '', credits: null, diag: {}, codes: {}, stats: { staked: 0, paid: 0 } }, store.real || {});
   if (!real.events || typeof real.events !== 'object') real.events = {};
+  if (!real.codes || typeof real.codes !== 'object') real.codes = {};
   if (!Array.isArray(real.bets)) real.bets = [];
 
   const ledger = (number, jid, name) => {
@@ -491,6 +492,43 @@ module.exports = function createFootball(opts) {
     touch(); flushSync();
     return { status: 200 };
   }
+
+  // ── booking codes: share a slip. The code stores WHICH games / picks (not the odds); whoever loads it gets today's prices.
+  //    Every game is shown, but only games that have not started can be added to the betslip (live games would be bet at stale odds).
+  const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789', CODE_KEEP_MS = 14 * 86400000, MAX_CODES = 5000;
+  function makeCode(acc, body) {
+    const raw = Array.isArray(body.picks) ? body.picks : [], seen = new Set(), picks = [];
+    for (const p of raw) {
+      const ev = real.events[p && p.e], k = p && p.k ? String(p.k) : 'x', i = Number(p && p.i);
+      if (!ev || seen.has(ev.id) || !ev.o[k] || !Number.isInteger(i) || i < 0 || i >= ev.o[k].length) return { status: 400, error: 'bad_picks' };
+      seen.add(ev.id); picks.push({ e: ev.id, k, i, h: ev.h, a: ev.a, t: ev.t, lg: ev.lgName });
+    }
+    if (!picks.length || picks.length > MAX_PICKS) return { status: 400, error: 'bad_picks' };
+    let code; do { code = Array.from({ length: 6 }, () => CODE_CHARS[crypto.randomInt(0, CODE_CHARS.length)]).join(''); } while (real.codes[code]);
+    real.codes[code] = { picks, at: Date.now(), by: acc.number };
+    const keys = Object.keys(real.codes);
+    if (keys.length > MAX_CODES) {                                            // keep the newest MAX_CODES (and nothing older than 14 days)
+      const cut = Date.now() - CODE_KEEP_MS, byAge = keys.sort((x, y) => real.codes[y].at - real.codes[x].at);
+      byAge.forEach((k, ix) => { if (ix >= MAX_CODES || real.codes[k].at < cut) delete real.codes[k]; });
+    }
+    touch(); return { status: 200, code };
+  }
+  function codeView(code) {
+    const c = real.codes[String(code).toUpperCase()]; if (!c) return null;
+    const now = Date.now();
+    return { ok: true, now, code: String(code).toUpperCase(), at: c.at, legs: c.picks.map(p => {
+      const ev = real.events[p.e]; let st, score = null, odd = null;
+      if (!ev) st = 'ended';
+      else if (ev.status === 'done') { st = 'done'; score = ev.gh + '-' + ev.ga; }
+      else if (ev.status === 'void') st = 'void';
+      else if (now >= ev.t) st = now > ev.t + MIN_END_MS ? 'ended' : 'live';
+      else if (now > ev.t - CLOSE_MS) st = 'closed';
+      else st = 'open';
+      if (ev && ev.o && ev.o[p.k]) odd = ev.o[p.k][p.i];
+      if (st === 'open' && odd == null) st = 'nomarket';
+      return { e: p.e, k: p.k, i: p.i, h: p.h, a: p.a, t: p.t, lg: p.lg, st, odd, score };
+    }) };
+  }
   function realView(acc) {
     const now = Date.now(), w = acc ? walletOf(acc) : null, s = store.settings;
     const evs = Object.values(real.events).filter(ev => ev.status === 'open' && ev.t > now - 3 * 3600000).sort((a, b) => a.t - b.t).slice(0, 150)
@@ -543,6 +581,18 @@ module.exports = function createFootball(opts) {
     if (p === '/football/real/state' && req.method === 'GET') {
       if (hit('fbr', clientIp(req), 1200, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
       return send(res, 200, realView(acc));
+    }
+    const cm = p.match(/^\/football\/real\/code\/([A-Za-z0-9]{4,12})$/);
+    if (cm && req.method === 'GET') {
+      if (hit('fbk', clientIp(req), 60, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
+      const v = codeView(cm[1]); return v ? send(res, 200, v) : send(res, 404, { ok: false, error: 'no_code' });
+    }
+    if (p === '/football/real/code' && req.method === 'POST') {
+      if (req.headers['x-requested-with'] !== 'XMLHttpRequest') return send(res, 403, { ok: false, error: 'bad_request' });
+      if (!acc) return send(res, 401, { ok: false, error: 'not_logged_in' });
+      if (hit('fbk', acc.number, 30, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
+      const r = makeCode(acc, await readBody(req));
+      return r.status === 200 ? send(res, 200, { ok: true, code: r.code }) : send(res, r.status, { ok: false, error: r.error });
     }
     const isReal = p === '/football/real/bet';
     if (req.method !== 'POST' || (p !== '/football/bet' && !isReal)) return send(res, 404, { ok: false, error: 'not_found' });
