@@ -76,7 +76,13 @@
       <p class="s-muted small">Real fixtures, real kick-off times and real odds (1X2, double chance, draw no bet, GG/NG, Over/Under, home / away goals). Bets close 1 minute before kick-off and pay out after the real full-time score.</p>
       <p id="rinfo" class="s-muted small" hidden></p>
       <div id="rnote" class="s-card av-note" hidden></div>
-      <div class="sp-lt" id="lgTabsR" role="tablist" aria-label="Real leagues"></div>
+      <form id="codeForm" class="code-row" autocomplete="off">
+        <input id="codeIn" type="text" placeholder="Have a booking code? Enter it" maxlength="12" autocapitalize="characters" spellcheck="false" aria-label="Booking code">
+        <button class="btn-n small" type="submit">Load</button>
+      </form>
+      <div id="codeBox" class="s-card" hidden></div>
+      <div class="sp-lt" id="dayTabsR" role="tablist" aria-label="Days"></div>
+      <div class="sp-lt sp-lt2" id="lgTabsR" role="tablist" aria-label="Real leagues"></div>
       <div class="sp-mt" id="mkTabsR" role="tablist" aria-label="Markets"></div>
       <div id="rlist"></div>
     </section>
@@ -104,6 +110,8 @@
         <button type="button" data-set="500">500</button><button type="button" data-set="1000">1k</button><button type="button" data-set="max">MAX</button>
       </div>
       <div class="row"><span>Possible win</span><span class="win" id="win">0</span></div>
+      <button class="btn-n small ghost-n" id="mkCode" type="button" hidden>Get booking code (share this slip)</button>
+      <div id="codeOut" class="code-out" hidden></div>
       <div class="msg" id="msg" role="alert"></div>
       <button class="btn-n go" id="place" type="button">Place bet</button>
     </div>
