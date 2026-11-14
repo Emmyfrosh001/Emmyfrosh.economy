@@ -66,7 +66,7 @@ const near = (o, p) => { const ks = keysOf(o, p).filter(k => o[k][0] != null && 
 // S = light state polled every second · NX = next round (odds, open to bet) · CU = current round (on TV) · RC / HI = past tickets / results
 let S = null, NX = null, CU = null, RC = [], HI = [], rsId = 0, R = null, off = 0, roff = 0, tab = 'v', slipMode = 'v';
 let picks = {}, rpicks = {}, watched = 0, lastNext = 0, lastCur = 0, busy = false, fails = 0, rLoading = false;
-const UI = { v: { mk: 'x', lg: 0, line: 'near' }, r: { mk: 'x', lg: 'all', line: 'near' } }, rowLine = {}, rowCs = {}, openMore = new Set();
+const UI = { v: { mk: 'x', lg: 0, line: 'near' }, r: { mk: 'x', lg: 'all', day: 'all', line: 'near' } }, rowLine = {}, rowCs = {}, openMore = new Set();
 const serverNow = () => Date.now() + off;
 const nleft = () => S ? S.nextKick - serverNow() : 0;
 function cphase() {                                           // the round that is on TV
@@ -267,47 +267,98 @@ function renderBtn() {
 // ── real matches ────────────────────────────────────────────
 const fmtTime = (t) => new Date(t).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 const fmtClock = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-const dayLabel = (t) => {                                    // Today / Tomorrow / Mon 16 Nov (in the player's own time zone)
-  const d = new Date(t), n = new Date(), tm = new Date(n.getTime() + 86400000), same = (a, b) => a.toDateString() === b.toDateString();
-  return same(d, n) ? 'Today' : same(d, tm) ? 'Tomorrow' : d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
-};
+const sameDay = (a, b) => new Date(a).toDateString() === new Date(b).toDateString();
+const dayWord = (t) => sameDay(t, Date.now()) ? 'Today' : sameDay(t, Date.now() + 86400000) ? 'Tomorrow' : new Date(t).toLocaleDateString([], { weekday: 'long' });
+const dayLabel = (t) => dayWord(t) + ' · ' + new Date(t).toLocaleDateString([], { day: 'numeric', month: 'short' });     // Today · 14 Nov / Monday · 16 Nov
 const until = (ms) => { const m = Math.max(0, Math.round(ms / 60000)); return m < 60 ? m + 'm' : m < 1440 ? Math.floor(m / 60) + 'h ' + String(m % 60).padStart(2, '0') + 'm' : Math.floor(m / 1440) + 'd ' + Math.floor(m % 1440 / 60) + 'h'; };
 const rTeam = (n) => ({ n, c: n.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase(), col: '#64748b', st: 0 });
 function renderReal() {
   const box = $('rlist'), note = $('rnote'), info = $('rinfo'); if (!R) return;
-  const now = Date.now() + roff, ui = UI.r, tabs = $('lgTabsR');
+  const now = Date.now() + roff, ui = UI.r, tabs = $('lgTabsR'), dtabs = $('dayTabsR');
   if (R.setup || !R.on) {
-    note.hidden = false; info.hidden = true; box.replaceChildren(); $('mkTabsR').replaceChildren(); tabs.replaceChildren();
+    note.hidden = false; info.hidden = true; box.replaceChildren(); $('mkTabsR').replaceChildren(); tabs.replaceChildren(); dtabs.replaceChildren();
     note.replaceChildren(el('strong', '', R.setup ? 'Real matches are not switched on yet.' : 'Betting is closed right now.'), el('span', 's-muted', ' Please check again later. The virtual TV is open.'));
     return;
   }
   note.hidden = true; box.replaceChildren();
-  const items = R.events.map(ev => { const shut = ev.closed || now > ev.t - 60000;
+  const all = R.events.map(ev => { const shut = ev.closed || now > ev.t - 60000;
     return { id: ev.id, t: ev.t, lgn: ev.lg, h: rTeam(ev.h), a: rTeam(ev.a), o: ev.o, closed: shut,
-      meta: fmtClock(ev.t) + ' · ' + (now >= ev.t ? 'In play' : shut ? 'Closing' : 'starts in ' + until(ev.t - now)) }; });
+      meta: ev.lg + ' · ' + fmtClock(ev.t) + ' · ' + (now >= ev.t ? 'In play' : shut ? 'Closing' : 'in ' + until(ev.t - now)) }; }).sort((a, b) => a.t - b.t);
   info.hidden = false;
-  info.textContent = 'Kick-off times are in your time (' + (Intl.DateTimeFormat().resolvedOptions().timeZone || 'local') + ').' + (R.updated ? ' Odds updated ' + fmtClock(R.updated) + '.' : '');
-  const lgs = [...new Set(items.map(it => it.lgn))];
+  info.textContent = 'Today and the next 6 days. Kick-off times are in your time (' + (Intl.DateTimeFormat().resolvedOptions().timeZone || 'local') + ').' + (R.updated ? ' Odds updated ' + fmtClock(R.updated) + '.' : '');
+  // day tabs (Today · Tomorrow · Mon 16 …) and league tabs
+  const days = [...new Set(all.map(it => new Date(it.t).toDateString()))];
+  if (ui.day !== 'all' && !days.includes(ui.day)) ui.day = 'all';
+  dtabs.replaceChildren();
+  if (days.length) [['all', 'All days (' + all.length + ')'], ...days.map(d => { const f = all.find(it => new Date(it.t).toDateString() === d); return [d, dayWord(f.t) + ' (' + all.filter(it => new Date(it.t).toDateString() === d).length + ')']; })].forEach(([v, t]) => {
+    const b = el('button', 'lt', t); b.type = 'button'; b.setAttribute('aria-selected', String(ui.day === v)); b.onclick = () => { ui.day = v; renderReal(); }; dtabs.append(b);
+  });
+  const byDay = all.filter(it => ui.day === 'all' || new Date(it.t).toDateString() === ui.day);
+  const lgs = [...new Set(byDay.map(it => it.lgn))];
   if (ui.lg !== 'all' && !lgs.includes(ui.lg)) ui.lg = 'all';
   tabs.replaceChildren();
-  if (lgs.length > 1) [['all', 'All (' + items.length + ')'], ...lgs.map(l => [l, l])].forEach(([v, t]) => {
+  if (lgs.length > 1) [['all', 'All leagues'], ...lgs.map(l => [l, l])].forEach(([v, t]) => {
     const b = el('button', 'lt', t); b.type = 'button'; b.setAttribute('aria-selected', String(ui.lg === v)); b.onclick = () => { ui.lg = v; renderReal(); }; tabs.append(b);
   });
-  marketTabs($('mkTabsR'), ui, items, renderReal);
-  if (!MKTS.some(m => m.id === ui.mk && items.some(it => hasM(it.o, m)))) ui.mk = 'x';
-  if (!items.length) {
+  const items = byDay.filter(it => ui.lg === 'all' || it.lgn === ui.lg);
+  marketTabs($('mkTabsR'), ui, all, renderReal);
+  if (!MKTS.some(m => m.id === ui.mk && all.some(it => hasM(it.o, m)))) ui.mk = 'x';
+  if (!all.length) {
     box.append(el('p', 'empty', R.updated ? 'No real matches to bet on in the next ' + (R.days || 7) + ' days. New fixtures appear here automatically.' : 'Loading real fixtures…'));
     const why = (R.diag || []).map(d => d.lg + ': ' + (d.err || (d.n ? d.n + ' matches, odds not posted yet' : 'no matches'))).slice(0, 12);       // tells the owner WHY the list is empty
     if (R.error) why.unshift('Odds provider says: ' + R.error);
     if (why.length) { const w = el('div', 'empty'); why.forEach(t => w.append(el('div', '', '• ' + t))); box.append(w); }
     return;
   }
-  lgs.filter(lg => ui.lg === 'all' || ui.lg === lg).forEach(lg => {
-    const g = items.filter(it => it.lgn === lg).sort((a, b) => a.t - b.t); box.append(leagueHead(lg, ui, g, renderReal));
-    let day = '';
-    g.forEach(it => { const d = dayLabel(it.t); if (d !== day) { day = d; box.append(el('div', 'day-sep', d)); } box.append(matchRow(it, ui, rpicks, it.closed || !R.on, renderReal)); });
+  box.append(leagueHead(ui.lg === 'all' ? 'All leagues' : ui.lg, ui, items, renderReal));
+  let day = '';
+  items.forEach(it => { const d = dayLabel(it.t); if (d !== day) { day = d; box.append(el('div', 'day-sep', d)); } box.append(matchRow(it, ui, rpicks, it.closed || !R.on, renderReal)); });
+}
+
+// ── booking codes: share a slip, load someone else's ─────────
+const CODE_ST = { open: ['won', 'Added to slip'], closed: ['pend', 'Closing'], live: ['live', 'Live / started'], ended: ['pend', 'Started'], done: ['pend', 'Finished'], void: ['pend', 'Void'], nomarket: ['lost', 'No odds now'] };
+function showCode(c) {
+  const box = $('codeBox'); box.replaceChildren(); box.hidden = false;
+  const added = c.legs.filter(l => l.st === 'open').length, h = el('div', 'cb-h'), x = el('button', 'cb-x', '×'); x.type = 'button'; x.onclick = () => { box.hidden = true; };
+  h.append(el('b', '', 'Booking code ' + c.code + ' · ' + c.legs.length + ' game' + (c.legs.length > 1 ? 's' : '')), x); box.append(h);
+  box.append(el('p', 's-muted small', added === c.legs.length ? 'All games are open. They are on your betslip with today\'s odds.'
+    : added ? added + ' of ' + c.legs.length + ' games are open and on your betslip. The others have already started (or are locked) and cannot be bet on.'
+    : 'None of these games can be bet on any more (started or locked). Prices on live games are not offered.'));
+  c.legs.forEach(l => {
+    const r = CODE_ST[l.st] || CODE_ST.ended, d = el('div', 'tk-leg'), a = el('div', 'tk-l1'), b = el('div', 'tk-l2');
+    a.append(el('b', '', l.h + ' v ' + l.a), el('span', 'tk-st ' + r[0], l.st === 'done' && l.score ? 'Final ' + l.score : r[1]));
+    b.append(el('span', '', mName(l.k) + ' · ' + pName(l.k, l.i)), el('b', '', l.odd != null && l.st === 'open' ? '@ ' + Number(l.odd).toFixed(2) : ''));
+    d.append(a, b, el('div', 'tk-l3', (l.lg ? l.lg + ' · ' : '') + dayLabel(l.t) + ' · ' + fmtClock(l.t)));
+    box.append(d);
   });
 }
+async function loadCode(code) {
+  code = String(code || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, ''); if (code.length < 4) return;
+  for (let i = 0; i < 30 && (!R || rLoading); i++) { if (!R && !rLoading) loadReal(); await new Promise(r => setTimeout(r, 100)); }
+  try {
+    const r = await fetch('/football/real/code/' + encodeURIComponent(code), { credentials: 'same-origin', cache: 'no-store' }), j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) return toast(j.error === 'rate_limited' ? ERR.rate_limited : 'Booking code not found. Check it and try again.', true);
+    setTab('r'); await loadReal();
+    Object.keys(rpicks).forEach(k => delete rpicks[k]);
+    j.legs.forEach(l => { if (l.st === 'open' && l.odd != null && R && R.events.some(e => e.id === l.e && !e.closed)) rpicks[l.e] = { k: l.k, i: l.i, odd: l.odd }; });
+    showCode(j); renderReal(); renderBtn(); $('codeBox').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch { toast('No connection. Try again.', true); }
+}
+$('codeForm').onsubmit = (e) => { e.preventDefault(); loadCode($('codeIn').value); };
+$('mkCode').onclick = async () => {
+  const p = rpicks, out = $('codeOut'); if (!Object.keys(p).length) return;
+  try {
+    const r = await fetch('/football/real/code', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      body: JSON.stringify({ picks: Object.keys(p).map(e => ({ e, k: p[e].k, i: p[e].i })) }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.ok === false) { $('msg').textContent = errText(j.error); return; }
+    const link = location.origin + '/football#code=' + j.code, copy = (t, b) => { (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).catch(() => {}).then(() => { b.textContent = 'Copied'; }); };
+    out.replaceChildren(); out.hidden = false;
+    const c1 = el('button', 'btn-n small', 'Copy code'), c2 = el('button', 'btn-n small ghost-n', 'Copy link'); c1.type = c2.type = 'button';
+    c1.onclick = () => copy(j.code, c1); c2.onclick = () => copy(link, c2);
+    out.append(el('span', 's-muted', 'Booking code'), el('b', '', j.code), c1, c2);
+  } catch { $('msg').textContent = 'No connection. Try again.'; }
+};
 
 // ── my tickets (tap one to see exactly what you played) ─────
 const RES = { won: ['won', 'Won'], lost: ['lost', 'Lost'], pend: ['pend', 'Pending'], void: ['pend', 'Void'] };
@@ -387,10 +438,11 @@ function renderSlip() {
     rm.onclick = () => { delete p[m]; slipMode === 'r' ? renderReal() : renderList(); renderBtn(); Object.keys(p).length ? renderSlip() : $('slip').close(); };
     r.append(el('b', '', p[m].odd.toFixed(2)), document.createElement('br'), rm); row.append(l, r); box.append(row);
   });
+  $('mkCode').hidden = slipMode !== 'r' || !Object.keys(p).length;
   $('tot').textContent = total().toFixed(2);
   $('win').textContent = fmt(Math.floor(parseAmt($('stake').value) * total()));
 }
-$('open').onclick = () => { $('msg').textContent = ''; renderSlip(); $('slip').showModal(); };
+$('open').onclick = () => { $('msg').textContent = ''; $('codeOut').hidden = true; renderSlip(); $('slip').showModal(); };
 $('close').onclick = () => $('slip').close();
 $('stake').oninput = renderSlip;
 document.querySelectorAll('.chips [data-set]').forEach(b => b.onclick = () => {
@@ -495,4 +547,4 @@ setInterval(paint, 250);
 setInterval(load, 1000);
 setInterval(() => { if (tab !== 'v') loadReal(); else if (R) renderReal(); }, 15000);
 load(); loadReal(); requestAnimationFrame(draw);
-if (location.hash === '#real') setTab('r'); else if (location.hash === '#bets' || location.hash === '#tickets') setTab('b');
+if (/^#code=/i.test(location.hash)) { setTab('r'); loadCode(location.hash.slice(6)); } else if (location.hash === '#real') setTab('r'); else if (location.hash === '#bets' || location.hash === '#tickets') setTab('b');
