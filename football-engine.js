@@ -91,7 +91,7 @@ module.exports = function createFootball(opts) {
   if (!store.recent || typeof store.recent !== 'object') store.recent = {};
   if (!Array.isArray(store.history)) store.history = [];
   store.settings = cleanSettings(store.settings);
-  const real = store.real = Object.assign({ events: {}, bets: [], lastFetch: 0, lastError: '', stats: { staked: 0, paid: 0 } }, store.real || {});
+  const real = store.real = Object.assign({ events: {}, bets: [], lastFetch: 0, lastError: '', credits: null, stats: { staked: 0, paid: 0 } }, store.real || {});
   if (!real.events || typeof real.events !== 'object') real.events = {};
   if (!Array.isArray(real.bets)) real.bets = [];
 
@@ -267,8 +267,18 @@ module.exports = function createFootball(opts) {
 
   // ═══════════════ REAL football (real fixtures, real odds, real results) ═══════════════
   // Data: The Odds API (https://the-odds-api.com). Needs env ODDS_API_KEY. Without it this part stays switched off.
-  const ODDS_KEY = process.env.ODDS_API_KEY || '';
-  const LEAGUES = (process.env.REAL_LEAGUES || 'soccer_epl,soccer_uefa_champs_league,soccer_spain_la_liga').split(',').map(x => x.trim()).filter(Boolean);
+  const ODDS_KEY = String(process.env.ODDS_API_KEY || '').trim();
+  const LEAGUES = (process.env.REAL_LEAGUES || 'soccer_epl,soccer_uefa_champs_league,soccer_spain_la_liga,soccer_italy_serie_a,soccer_germany_bundesliga,soccer_france_ligue_one').split(',').map(x => x.trim()).filter(Boolean);
+  const REGIONS = String(process.env.REAL_REGIONS || 'eu').replace(/[^a-z,]/gi, '') || 'eu';
+  // extra markets (GG/NG, double chance, draw no bet, more Over/Under lines, home / away goals) cost 1 credit per market per match,
+  // so they are fetched only for matches starting soon and re-fetched slowly. REAL_EXTRA_MARKETS=off switches them off.
+  const EXTRA_RAW = String(process.env.REAL_EXTRA_MARKETS === undefined ? 'btts,double_chance,draw_no_bet,alternate_totals,team_totals' : process.env.REAL_EXTRA_MARKETS).trim();
+  const EXTRA_MKTS = /^(off|none|0|)$/i.test(EXTRA_RAW) ? [] : EXTRA_RAW.split(',').map(x => x.trim()).filter(x => /^[a-z0-9_]+$/.test(x));
+  const EXTRA_HOURS = Math.max(1, Number(process.env.REAL_EXTRA_HOURS) || 36);                       // only matches starting within this many hours
+  const EXTRA_REFRESH = Math.max(30, Number(process.env.REAL_EXTRA_REFRESH_MIN) || 720) * 60000;     // per match
+  const EXTRA_PER_CYCLE = Math.max(1, Number(process.env.REAL_EXTRA_PER_CYCLE) || 12);              // matches per 20-minute cycle
+  const MIN_CREDITS = Math.max(0, Number(process.env.REAL_MIN_CREDITS) || 40);                       // below this the extras pause (keeps credits for 1X2 + scores)
+  const creditsLow = (n) => !!(real.credits && Date.now() - real.credits.at < 6 * 3600000 && real.credits.left < n);
   const LEAGUE_NAME = { soccer_epl: 'Premier League', soccer_uefa_champs_league: 'Champions League', soccer_spain_la_liga: 'La Liga',
     soccer_italy_serie_a: 'Serie A', soccer_germany_bundesliga: 'Bundesliga', soccer_france_ligue_one: 'Ligue 1',
     soccer_uefa_europa_league: 'Europa League', soccer_efl_champ: 'Championship', soccer_netherlands_eredivisie: 'Eredivisie',
@@ -277,51 +287,109 @@ module.exports = function createFootball(opts) {
   const REFRESH_MS = Math.max(10, Number(process.env.REAL_REFRESH_MIN) || 180) * 60000;
   const CLOSE_MS = 60000, MIN_END_MS = 125 * 60000, VOID_MS = 60 * 3600000, MAX_REAL_OPEN = 20;
   const API = 'https://api.the-odds-api.com/v4/sports/';
-  const getJson = async (url) => { const r = await fetch(url, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error('odds api ' + r.status); return r.json(); };
-  const avg = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+  const getJson = async (url) => {
+    const r = await fetch(url, { signal: AbortSignal.timeout(20000) });
+    const left = r.headers.get('x-requests-remaining');                       // keep an eye on the monthly credits
+    if (left !== null && left !== '' && Number.isFinite(Number(left))) { real.credits = { left: Number(left), used: Number(r.headers.get('x-requests-used')) || 0, at: Date.now() }; touch(); }
+    if (!r.ok) throw new Error('odds api ' + r.status + (r.status === 401 ? ' (wrong key)' : r.status === 429 ? ' (out of credits / too fast)' : ''));
+    return r.json();
+  };
+  // average over the bookmakers that quote a price; with 3+ quotes the single highest one is dropped so one odd bookmaker cannot hand out a freak price
+  const avg = (a) => { a = [...a].sort((x, y) => x - y); if (a.length >= 3) a.pop(); return a.reduce((x, y) => x + y, 0) / a.length; };
   const tidy = (p) => Math.min(100, Math.max(1.01, Math.round(p * (1 - REAL_EDGE) * 100) / 100));
+  const half = (pt, max) => Number.isFinite(pt) && pt % 1 === 0.5 && pt > 0 && pt <= max;       // only .5 lines (no push / quarter lines)
 
-  function parseOdds(e) {                      // average the price over every bookmaker that quotes it
+  // The Odds API → our markets:  x 1X2 · dc double chance (1X, 12, X2) · dnb draw no bet (1, 2) · gg GG/NG · oNN total goals · hNN / aNN home / away goals
+  function parseOdds(e) {
+    const H = String(e.home_team || ''), A = String(e.away_team || '');
     const acc = {}, put = (k, i, n, price) => { (acc[k] || (acc[k] = Array.from({ length: n }, () => [])))[i].push(price); };
     for (const bm of e.bookmakers || []) for (const mk of bm.markets || []) for (const oc of mk.outcomes || []) {
       const price = Number(oc.price); if (!(price > 1)) continue;
-      if (mk.key === 'h2h') { const i = oc.name === e.home_team ? 0 : oc.name === 'Draw' ? 1 : oc.name === e.away_team ? 2 : -1; if (i >= 0) put('x', i, 3, price); }
-      else if (mk.key === 'totals') { const pt = Number(oc.point), i = oc.name === 'Over' ? 0 : oc.name === 'Under' ? 1 : -1;
-        if (i >= 0 && Number.isFinite(pt) && pt % 1 === 0.5 && pt <= 6.5) put('o' + Math.round(pt * 10), i, 2, price); }
+      const name = String(oc.name || ''), desc = String(oc.description || ''), pt = Number(oc.point), ou = name === 'Over' ? 0 : name === 'Under' ? 1 : -1;
+      switch (mk.key) {
+        case 'h2h': case 'h2h_3_way': { const i = name === H ? 0 : /^draw$/i.test(name) ? 1 : name === A ? 2 : -1; if (i >= 0) put('x', i, 3, price); break; }
+        case 'totals': case 'alternate_totals': if (ou >= 0 && half(pt, 6.5)) put('o' + Math.round(pt * 10), ou, 2, price); break;
+        case 'team_totals': case 'alternate_team_totals': {
+          const side = (desc === H || name === H) ? 'h' : (desc === A || name === A) ? 'a' : '';
+          if (side && ou >= 0 && half(pt, 3.5)) put(side + Math.round(pt * 10), ou, 2, price); break;
+        }
+        case 'btts': { const i = /^yes$/i.test(name) ? 0 : /^no$/i.test(name) ? 1 : -1; if (i >= 0) put('gg', i, 2, price); break; }
+        case 'draw_no_bet': { const i = name === H ? 0 : name === A ? 1 : -1; if (i >= 0) put('dnb', i, 2, price); break; }
+        case 'double_chance': {
+          const n = name.toLowerCase().replace(/\s+/g, ''), hasH = !!H && name.includes(H), hasA = !!A && name.includes(A), hasD = /draw/i.test(name);
+          const i = (hasH && hasD) || n === '1x' ? 0 : (hasH && hasA) || n === '12' ? 1 : (hasD && hasA) || n === 'x2' ? 2 : -1;
+          if (i >= 0) put('dc', i, 3, price); break;
+        }
+      }
     }
     const o = {};
     for (const [k, rows] of Object.entries(acc)) if (rows.every(r => r.length)) o[k] = rows.map(r => tidy(avg(r)));
     return o;
   }
-  let refreshing = false;
+  const compose = (ev) => { ev.o = Object.assign({}, ev.ex || {}, ev.base || {}); return ev; };     // 1X2 + main Over/Under from the main call win; the rest from the per-match call
+  for (const ev of Object.values(real.events)) { if (!ev.base) ev.base = ev.o || {}; compose(ev); }
+  let refreshing = false, exBusy = false;
   async function refreshReal() {
     if (!ODDS_KEY || refreshing) return; refreshing = true;
     try {
       const to = new Date(Date.now() + 5 * 86400000).toISOString().replace(/\.\d{3}Z$/, 'Z'); let err = '';
-      for (const lg of LEAGUES) {
+      if (creditsLow(4)) err = 'Odds API credits are used up. Real matches keep their last odds until the credits reset.';
+      else for (const lg of LEAGUES) {
         try {
-          const list = await getJson(API + encodeURIComponent(lg) + '/odds/?apiKey=' + encodeURIComponent(ODDS_KEY) + '&regions=eu&markets=h2h,totals&oddsFormat=decimal&dateFormat=iso&commenceTimeTo=' + to);
+          const list = await getJson(API + encodeURIComponent(lg) + '/odds/?apiKey=' + encodeURIComponent(ODDS_KEY) + '&regions=' + REGIONS + '&markets=h2h,totals&oddsFormat=decimal&dateFormat=iso&commenceTimeTo=' + to);
           for (const e of Array.isArray(list) ? list : []) {
             const t = Date.parse(e.commence_time), o = parseOdds(e); if (!o.x || !Number.isFinite(t)) continue;
             const old = real.events[e.id];
             if (old && old.status !== 'open') continue;
             if (old && old.t <= Date.now()) continue;                       // kicked off: the odds stay frozen
-            real.events[e.id] = { id: e.id, lg, lgName: LEAGUE_NAME[lg] || lg, h: e.home_team, a: e.away_team, t, o, status: 'open', gh: null, ga: null };
+            real.events[e.id] = compose({ id: e.id, lg, lgName: LEAGUE_NAME[lg] || lg, h: e.home_team, a: e.away_team, t, base: o, ex: old ? old.ex : {}, exAt: old ? old.exAt : 0, status: 'open', gh: null, ga: null });
           }
         } catch (x) { err = String(x.message || x).slice(0, 120); }
       }
       real.lastFetch = Date.now(); real.lastError = err; touch();
     } finally { refreshing = false; }
+    refreshExtras();
+  }
+  // GG/NG, double chance, draw no bet, more Over/Under lines, home / away goals — one call per match (soonest first)
+  async function refreshExtras() {
+    if (!ODDS_KEY || !EXTRA_MKTS.length || exBusy) return; exBusy = true;
+    try {
+      const now = Date.now();
+      const due = Object.values(real.events).filter(ev => ev.status === 'open' && ev.t > now + CLOSE_MS && ev.t < now + EXTRA_HOURS * 3600000 && now - (ev.exAt || 0) > EXTRA_REFRESH)
+        .sort((a, b) => a.t - b.t).slice(0, EXTRA_PER_CYCLE);
+      for (const ev of due) {
+        if (creditsLow(MIN_CREDITS)) { real.lastError = 'Odds API credits are low: extra markets paused (1X2 and Over/Under still work).'; break; }
+        ev.exAt = Date.now();                                                   // also on failure, so a bad match is not retried every cycle
+        try {
+          const d = await getJson(API + encodeURIComponent(ev.lg) + '/events/' + encodeURIComponent(ev.id) + '/odds?apiKey=' + encodeURIComponent(ODDS_KEY) + '&regions=' + REGIONS + '&markets=' + EXTRA_MKTS.join(',') + '&oddsFormat=decimal&dateFormat=iso');
+          const x = parseOdds(d); delete x.x;
+          if (Object.keys(x).length) { ev.ex = x; compose(ev); }
+        } catch (x) { real.lastError = String(x.message || x).slice(0, 120); }
+        touch();
+      }
+    } finally { exBusy = false; }
   }
   const ouLine = (k) => Number(k.slice(1)) / 10;
-  const realOutcome = (ev, k) => k === 'x' ? (ev.gh > ev.ga ? 0 : ev.gh === ev.ga ? 1 : 2) : (ev.gh + ev.ga > ouLine(k) ? 0 : 1);
+  const res3 = (ev) => ev.gh > ev.ga ? 0 : ev.gh === ev.ga ? 1 : 2;
+  // → 'won' | 'lost' | 'void' (draw no bet on a draw = stake back on that leg), from the real final score
+  function realLeg(ev, k, i) {
+    const r = res3(ev);
+    if (k === 'x') return r === i ? 'won' : 'lost';
+    if (k === 'dc') return (i === 0 ? r !== 2 : i === 1 ? r !== 1 : r !== 0) ? 'won' : 'lost';
+    if (k === 'dnb') return r === 1 ? 'void' : (r === i ? 'won' : 'lost');
+    if (k === 'gg') return ((ev.gh > 0 && ev.ga > 0) === (i === 0)) ? 'won' : 'lost';
+    const g = k[0] === 'o' ? ev.gh + ev.ga : k[0] === 'h' ? ev.gh : ev.ga;
+    return ((g > ouLine(k)) === (i === 0)) ? 'won' : 'lost';
+  }
   function evalBet(b) {                        // → null while undecided, else { st, win }
     let prod = 1, won = 0, pending = false;
     for (const p of b.picks) {
       const ev = real.events[p.e];
       if (!ev || ev.status === 'void') continue;                              // void leg: counts as odds 1.00
       if (ev.status !== 'done') { pending = true; continue; }
-      if (realOutcome(ev, p.k) !== p.i) return { st: 'lost', win: 0 };       // one wrong leg loses the slip straight away
+      const r = realLeg(ev, p.k, p.i);
+      if (r === 'lost') return { st: 'lost', win: 0 };                        // one wrong leg loses the slip straight away
+      if (r === 'void') continue;
       prod *= p.odd; won++;
     }
     if (pending) return null;
@@ -331,7 +399,7 @@ module.exports = function createFootball(opts) {
     const ev = real.events[p.e];
     if (!ev || ev.status === 'void') return { res: 'void' };
     if (ev.status !== 'done') return { res: 'pend' };
-    return { res: realOutcome(ev, p.k) === p.i ? 'won' : 'lost', score: ev.gh + '-' + ev.ga };
+    return { res: realLeg(ev, p.k, p.i), score: ev.gh + '-' + ev.ga };
   };
   function settleBets() {
     for (const b of real.bets) {
@@ -371,6 +439,7 @@ module.exports = function createFootball(opts) {
   if (ODDS_KEY) {
     setTimeout(refreshReal, 3000).unref();
     setInterval(() => { if (Date.now() - real.lastFetch >= REFRESH_MS) refreshReal(); }, 60000).unref();
+    setInterval(refreshExtras, 20 * 60000).unref();                                  // matches that come within range later get their extra markets too
     setInterval(pollScores, 300000).unref();
     setTimeout(pollScores, 15000).unref();
   }
@@ -405,7 +474,7 @@ module.exports = function createFootball(opts) {
   }
   function realView(acc) {
     const now = Date.now(), w = acc ? walletOf(acc) : null, s = store.settings;
-    const evs = Object.values(real.events).filter(ev => ev.status === 'open' && ev.t > now - 3 * 3600000).sort((a, b) => a.t - b.t).slice(0, 60)
+    const evs = Object.values(real.events).filter(ev => ev.status === 'open' && ev.t > now - 3 * 3600000).sort((a, b) => a.t - b.t).slice(0, 150)
       .map(ev => ({ id: ev.id, lg: ev.lgName, h: ev.h, a: ev.a, t: ev.t, o: ev.o, closed: now > ev.t - CLOSE_MS }));
     const mine = acc ? real.bets.filter(b => b.number === acc.number).slice(-30).reverse()
       .map(b => ({ id: b.id, at: b.at, picks: b.picks.map((p, ix) => Object.assign({ k: p.k, i: p.i, odd: p.odd, h: p.h, a: p.a, t: p.t }, b.res ? b.res[ix] : legRes(p))), amount: b.amount, odds: b.odds, status: b.status, win: b.win })) : [];
@@ -443,7 +512,7 @@ module.exports = function createFootball(opts) {
     const clean = cleanSettings(Object.assign({}, store.settings, patch || {}));
     store.settings = clean; touch(); return { settings: clean };
   }
-  const adminInfo = () => ({ settings: store.settings, round: { next: nxt.id, nextBets: nxt.bets.length, live: cur.id, liveBets: cur.bets.length }, real: { on: !!ODDS_KEY, events: Object.keys(real.events).length, openBets: real.bets.filter(b => b.status === 'open').length, lastFetch: real.lastFetch, lastError: real.lastError, stats: real.stats }, stats: Object.assign({ houseNet: store.stats.staked - store.stats.paid }, store.stats) });
+  const adminInfo = () => ({ settings: store.settings, round: { next: nxt.id, nextBets: nxt.bets.length, live: cur.id, liveBets: cur.bets.length }, real: { on: !!ODDS_KEY, events: Object.keys(real.events).length, openBets: real.bets.filter(b => b.status === 'open').length, lastFetch: real.lastFetch, lastError: real.lastError, credits: real.credits, extraMarkets: EXTRA_MKTS, leagues: LEAGUES, stats: real.stats }, stats: Object.assign({ houseNet: store.stats.staked - store.stats.paid }, store.stats) });
 
   // ── http entry point (server.js sends everything under /football/ here) ──
   async function handle(req, res, p) {
