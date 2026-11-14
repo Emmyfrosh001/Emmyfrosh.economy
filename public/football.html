@@ -26,13 +26,21 @@
   <main class="wrap av-main fb-main">
     <p id="toast" class="s-toast" role="status" hidden></p>
 
-    <div class="tv">
-      <canvas id="fbcv" width="800" height="450" role="img" aria-label="Live virtual football match"></canvas>
-      <div class="tvbar"><span><i></i>FOOTBALL TV · <span id="chan">Match 1</span></span><span class="led" aria-hidden="true"></span></div>
-      <div class="stand" aria-hidden="true"></div>
+    <!-- all the rooms in one row -->
+    <nav class="rooms" aria-label="Rooms">
+      <a href="/">🏠 Home</a>
+      <a href="/shop">🛒 Shop &amp; Market</a>
+      <a href="/shop#wallet">👛 My wallet</a>
+      <a href="/aviator">✈️ Crash plane</a>
+      <a href="/football" class="on" aria-current="page">⚽ Football</a>
+    </nav>
+
+    <div class="fb-tabs" role="tablist" aria-label="Football sections">
+      <button type="button" role="tab" id="tabBtnV" data-tab="v" aria-selected="true">📺 Virtual TV</button>
+      <button type="button" role="tab" id="tabBtnR" data-tab="r" aria-selected="false">🌍 Real matches</button>
+      <button type="button" role="tab" id="tabBtnB" data-tab="b" aria-selected="false">🎟️ My tickets</button>
     </div>
 
-    <div class="fb-phase"><span id="ph">Connecting…</span><b id="clk">0:00</b></div>
     <div id="conn" class="fb-note" hidden>Reconnecting…</div>
 
     <div id="loginNote" class="s-card av-note" hidden>
@@ -46,17 +54,45 @@
       <span class="s-muted">Please check again later.</span>
     </div>
 
-    <div id="list"></div>
+    <!-- VIRTUAL TV -->
+    <section id="panelV" role="tabpanel" aria-labelledby="tabBtnV">
+      <div class="tv">
+        <canvas id="fbcv" width="800" height="450" role="img" aria-label="Live virtual football match"></canvas>
+        <div class="tvbar"><span><i></i>FOOTBALL TV · <span id="chan">Match 1</span></span><span><b id="tvst" class="tvst"></b> <span class="led" aria-hidden="true"></span></span></div>
+        <div class="stand" aria-hidden="true"></div>
+      </div>
+      <div class="fb-phase"><span id="ph">Next kick-off in</span><b id="clk">1:30</b></div>
+      <h2 class="fb-h2" id="liveTitle">On TV now</h2>
+      <div class="live-row" id="liveRow" aria-label="Matches on TV now"></div>
+      <h2 class="fb-h2" id="nextTitle">Next round</h2>
+      <div class="sp-lt" id="lgTabs" role="tablist" aria-label="Leagues"></div>
+      <div class="sp-mt" id="mkTabs" role="tablist" aria-label="Markets"></div>
+      <div id="list"></div>
+      <section class="fb-block"><h2 class="fb-h" id="resTitle">Last results</h2><div id="results"></div></section>
+    </section>
 
-    <section class="fb-block"><h2 class="fb-h">My bets</h2><div id="mine"></div></section>
-    <section class="fb-block"><h2 class="fb-h">Last results</h2><div id="results"></div></section>
-    <p class="s-muted small center">Bets use your wallet money. Every result is drawn by the server before kick-off.</p>
+    <!-- REAL MATCHES -->
+    <section id="panelR" role="tabpanel" aria-labelledby="tabBtnR" hidden>
+      <p class="s-muted small">Real fixtures and real odds. Bets close 1 minute before kick-off and pay out after the real full-time score.</p>
+      <div id="rnote" class="s-card av-note" hidden></div>
+      <div class="sp-mt" id="mkTabsR" role="tablist" aria-label="Markets"></div>
+      <div id="rlist"></div>
+    </section>
+
+    <!-- MY BETS -->
+    <section id="panelB" role="tabpanel" aria-labelledby="tabBtnB" hidden>
+      <p class="s-muted small">Tap a ticket to see exactly what you played.</p>
+      <section class="fb-block"><h2 class="fb-h">Virtual TV</h2><div id="mine"></div></section>
+      <section class="fb-block"><h2 class="fb-h">Real matches</h2><div id="realMine"></div></section>
+    </section>
+
+    <p class="s-muted small center">Bets use your wallet money. Virtual results are drawn by the server before kick-off. Real results come from the real final score.</p>
   </main>
 
-  <div class="fb-bar"><button id="open" class="btn-n" type="button" disabled>Betslip (0)</button></div>
+  <div class="fb-bar"><div id="nextRound" class="nr">Next Round</div><button id="open" type="button" disabled>Betslip</button></div>
 
   <dialog id="slip" aria-label="Betslip">
-    <div class="sh"><span>Betslip</span><button class="x" id="close" type="button" aria-label="Close betslip">×</button></div>
+    <div class="sh"><span id="slipTitle">Betslip</span><button class="x" id="close" type="button" aria-label="Close betslip">×</button></div>
     <div id="sels"></div>
     <div class="f">
       <div class="row"><span>Total odds</span><b id="tot">0.00</b></div>
@@ -69,6 +105,11 @@
       <div class="msg" id="msg" role="alert"></div>
       <button class="btn-n go" id="place" type="button">Place bet</button>
     </div>
+  </dialog>
+
+  <dialog id="ticketDlg" aria-label="Ticket details">
+    <div class="sh"><span id="tkTitle">Ticket</span><button class="x" id="tkClose" type="button" aria-label="Close ticket">×</button></div>
+    <div id="tkBody" class="tk-body"></div>
   </dialog>
 
   <script src="/football.js"></script>
