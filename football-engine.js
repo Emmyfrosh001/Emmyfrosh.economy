@@ -91,7 +91,7 @@ module.exports = function createFootball(opts) {
   if (!store.recent || typeof store.recent !== 'object') store.recent = {};
   if (!Array.isArray(store.history)) store.history = [];
   store.settings = cleanSettings(store.settings);
-  const real = store.real = Object.assign({ events: {}, bets: [], lastFetch: 0, lastError: '', credits: null, stats: { staked: 0, paid: 0 } }, store.real || {});
+  const real = store.real = Object.assign({ events: {}, bets: [], lastFetch: 0, lastError: '', credits: null, diag: {}, stats: { staked: 0, paid: 0 } }, store.real || {});
   if (!real.events || typeof real.events !== 'object') real.events = {};
   if (!Array.isArray(real.bets)) real.bets = [];
 
@@ -268,7 +268,16 @@ module.exports = function createFootball(opts) {
   // ═══════════════ REAL football (real fixtures, real odds, real results) ═══════════════
   // Data: The Odds API (https://the-odds-api.com). Needs env ODDS_API_KEY. Without it this part stays switched off.
   const ODDS_KEY = String(process.env.ODDS_API_KEY || '').trim();
-  const LEAGUES = (process.env.REAL_LEAGUES || 'soccer_epl,soccer_uefa_champs_league,soccer_spain_la_liga,soccer_italy_serie_a,soccer_germany_bundesliga,soccer_france_ligue_one').split(',').map(x => x.trim()).filter(Boolean);
+  // REAL_LEAGUES = "auto" (default): every soccer league that is in season right now (free lookup), the big ones first, at most REAL_AUTO_MAX of them.
+  // Or give a fixed list, e.g. REAL_LEAGUES=soccer_epl,soccer_spain_la_liga
+  const LEAGUES_RAW = String(process.env.REAL_LEAGUES || 'auto').trim();
+  const AUTO = /^auto$/i.test(LEAGUES_RAW);
+  const LEAGUES = AUTO ? [] : LEAGUES_RAW.split(',').map(x => x.trim()).filter(Boolean);
+  const AUTO_MAX = Math.max(1, Number(process.env.REAL_AUTO_MAX) || 10);
+  const DAYS = Math.min(14, Math.max(1, Number(process.env.REAL_DAYS) || 7));                  // today + the next DAYS-1 days
+  const FIRST = ['soccer_epl', 'soccer_uefa_champs_league', 'soccer_spain_la_liga', 'soccer_italy_serie_a', 'soccer_germany_bundesliga', 'soccer_france_ligue_one',
+    'soccer_uefa_europa_league', 'soccer_efl_champ', 'soccer_netherlands_eredivisie', 'soccer_portugal_primeira_liga', 'soccer_fifa_world_cup_qualifier', 'soccer_uefa_nations_league', 'soccer_international_friendlies', 'soccer_africa_cup_of_nations'];
+  const TITLES = {};
   const REGIONS = String(process.env.REAL_REGIONS || 'eu').replace(/[^a-z,]/gi, '') || 'eu';
   // extra markets (GG/NG, double chance, draw no bet, more Over/Under lines, home / away goals) cost 1 credit per market per match,
   // so they are fetched only for matches starting soon and re-fetched slowly. REAL_EXTRA_MARKETS=off switches them off.
@@ -328,24 +337,34 @@ module.exports = function createFootball(opts) {
   }
   const compose = (ev) => { ev.o = Object.assign({}, ev.ex || {}, ev.base || {}); return ev; };     // 1X2 + main Over/Under from the main call win; the rest from the per-match call
   for (const ev of Object.values(real.events)) { if (!ev.base) ev.base = ev.o || {}; compose(ev); }
+  async function pickLeagues() {                // free call (no credits): which soccer leagues are in season right now
+    if (!AUTO) return LEAGUES;
+    const all = await getJson(API + '?apiKey=' + encodeURIComponent(ODDS_KEY));
+    const soc = (Array.isArray(all) ? all : []).filter(x => x && x.active && !x.has_outrights && /^soccer_/.test(x.key));
+    soc.forEach(x => { TITLES[x.key] = x.title; });
+    const rank = (k) => { const i = FIRST.indexOf(k); return i < 0 ? 999 : i; };
+    return soc.map(x => x.key).sort((a, b) => rank(a) - rank(b)).slice(0, AUTO_MAX);
+  }
   let refreshing = false, exBusy = false;
   async function refreshReal() {
     if (!ODDS_KEY || refreshing) return; refreshing = true;
     try {
-      const to = new Date(Date.now() + 5 * 86400000).toISOString().replace(/\.\d{3}Z$/, 'Z'); let err = '';
+      const to = new Date(Date.now() + DAYS * 86400000).toISOString().replace(/\.\d{3}Z$/, 'Z'); let err = ''; const diag = {};
       if (creditsLow(4)) err = 'Odds API credits are used up. Real matches keep their last odds until the credits reset.';
-      else for (const lg of LEAGUES) {
+      else for (const lg of await pickLeagues().catch((x) => { err = String(x.message || x).slice(0, 120); return LEAGUES; })) {
         try {
           const list = await getJson(API + encodeURIComponent(lg) + '/odds/?apiKey=' + encodeURIComponent(ODDS_KEY) + '&regions=' + REGIONS + '&markets=h2h,totals&oddsFormat=decimal&dateFormat=iso&commenceTimeTo=' + to);
+          diag[lg] = { n: Array.isArray(list) ? list.length : 0, err: '' };
           for (const e of Array.isArray(list) ? list : []) {
             const t = Date.parse(e.commence_time), o = parseOdds(e); if (!o.x || !Number.isFinite(t)) continue;
             const old = real.events[e.id];
             if (old && old.status !== 'open') continue;
             if (old && old.t <= Date.now()) continue;                       // kicked off: the odds stay frozen
-            real.events[e.id] = compose({ id: e.id, lg, lgName: LEAGUE_NAME[lg] || lg, h: e.home_team, a: e.away_team, t, base: o, ex: old ? old.ex : {}, exAt: old ? old.exAt : 0, status: 'open', gh: null, ga: null });
+            real.events[e.id] = compose({ id: e.id, lg, lgName: LEAGUE_NAME[lg] || TITLES[lg] || lg, h: e.home_team, a: e.away_team, t, base: o, ex: old ? old.ex : {}, exAt: old ? old.exAt : 0, status: 'open', gh: null, ga: null });
           }
-        } catch (x) { err = String(x.message || x).slice(0, 120); }
+        } catch (x) { err = String(x.message || x).slice(0, 120); diag[lg] = { n: 0, err }; }
       }
+      if (Object.keys(diag).length) real.diag = diag;
       real.lastFetch = Date.now(); real.lastError = err; touch();
     } finally { refreshing = false; }
     refreshExtras();
@@ -478,7 +497,7 @@ module.exports = function createFootball(opts) {
       .map(ev => ({ id: ev.id, lg: ev.lgName, h: ev.h, a: ev.a, t: ev.t, o: ev.o, closed: now > ev.t - CLOSE_MS }));
     const mine = acc ? real.bets.filter(b => b.number === acc.number).slice(-30).reverse()
       .map(b => ({ id: b.id, at: b.at, picks: b.picks.map((p, ix) => Object.assign({ k: p.k, i: p.i, odd: p.odd, h: p.h, a: p.a, t: p.t }, b.res ? b.res[ix] : legRes(p))), amount: b.amount, odds: b.odds, status: b.status, win: b.win })) : [];
-    return { ok: true, now, on: !!ODDS_KEY && s.enabled, setup: !ODDS_KEY, limits: { min: s.minBet, max: s.maxBet }, events: evs, mine, balance: w ? w.have : null, updated: real.lastFetch, error: real.lastError || '' };
+    return { ok: true, now, on: !!ODDS_KEY && s.enabled, setup: !ODDS_KEY, limits: { min: s.minBet, max: s.maxBet }, events: evs, mine, balance: w ? w.have : null, updated: real.lastFetch, error: real.lastError || '', days: DAYS, diag: Object.entries(real.diag || {}).map(([k, v]) => ({ lg: LEAGUE_NAME[k] || TITLES[k] || k, n: v.n, err: v.err })) };
   }
 
   // ── what the browser sees ───────────────────────────────────
@@ -512,7 +531,7 @@ module.exports = function createFootball(opts) {
     const clean = cleanSettings(Object.assign({}, store.settings, patch || {}));
     store.settings = clean; touch(); return { settings: clean };
   }
-  const adminInfo = () => ({ settings: store.settings, round: { next: nxt.id, nextBets: nxt.bets.length, live: cur.id, liveBets: cur.bets.length }, real: { on: !!ODDS_KEY, events: Object.keys(real.events).length, openBets: real.bets.filter(b => b.status === 'open').length, lastFetch: real.lastFetch, lastError: real.lastError, credits: real.credits, extraMarkets: EXTRA_MKTS, leagues: LEAGUES, stats: real.stats }, stats: Object.assign({ houseNet: store.stats.staked - store.stats.paid }, store.stats) });
+  const adminInfo = () => ({ settings: store.settings, round: { next: nxt.id, nextBets: nxt.bets.length, live: cur.id, liveBets: cur.bets.length }, real: { on: !!ODDS_KEY, events: Object.keys(real.events).length, openBets: real.bets.filter(b => b.status === 'open').length, lastFetch: real.lastFetch, lastError: real.lastError, credits: real.credits, extraMarkets: EXTRA_MKTS, leagues: AUTO ? 'auto' : LEAGUES, stats: real.stats }, stats: Object.assign({ houseNet: store.stats.staked - store.stats.paid }, store.stats) });
 
   // ── http entry point (server.js sends everything under /football/ here) ──
   async function handle(req, res, p) {
