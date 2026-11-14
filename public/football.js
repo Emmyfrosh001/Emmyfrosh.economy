@@ -15,7 +15,8 @@ const ERR = {
   no_money: 'Your wallet is empty.', insufficient: 'Not enough money in your wallet for that stake.',
   below_min: 'That stake is below the minimum.', above_max: 'That stake is above the maximum.',
   rate_limited: 'Slow down a little and try again.', bad_request: 'Something went wrong. Refresh the page.',
-  real_off: 'Real football betting is not switched on yet.'
+  real_off: 'Real football betting is not switched on yet.',
+  locked_leg: 'A game that has already started cannot be changed or removed.', not_editable: 'This ticket can no longer be edited.', no_ticket: 'Ticket not found. Refresh the page.'
 };
 function errText(code) {
   const src = slipMode === 'r' ? R : S, lim = src && src.limits;
@@ -65,6 +66,7 @@ const near = (o, p) => { const ks = keysOf(o, p).filter(k => o[k][0] != null && 
 // ── state ───────────────────────────────────────────────────
 // S = light state polled every second · NX = next round (odds, open to bet) · CU = current round (on TV) · RC / HI = past tickets / results
 let S = null, NX = null, CU = null, RC = [], HI = [], rsId = 0, R = null, off = 0, roff = 0, tab = 'v', slipMode = 'v';
+let editing = null, dayInit = false, curTk = null;       // editing = { real, id, locked: { gameId: pick }, keep: Set, round }
 let picks = {}, rpicks = {}, watched = 0, lastNext = 0, lastCur = 0, busy = false, fails = 0, rLoading = false;
 const UI = { v: { mk: 'x', lg: 0, line: 'near' }, r: { mk: 'x', lg: 'all', day: 'all', line: 'near' } }, rowLine = {}, rowCs = {}, openMore = new Set();
 const serverNow = () => Date.now() + off;
@@ -79,7 +81,15 @@ function cphase() {                                           // the round that 
 const score = (f, m) => { let a = 0, b = 0; (f.goals || []).forEach(g => { if (g.m <= m) g.side ? b++ : a++; }); return [a, b]; };
 const mmss = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 const cur = () => slipMode === 'r' ? rpicks : picks;
-const total = () => { const p = cur(); return Object.keys(p).reduce((x, m) => x * p[m].odd, 1); };
+const lockedList = () => editing && editing.real && slipMode === 'r' ? Object.keys(editing.locked) : [];
+const total = () => { const p = cur(); const l = lockedList().reduce((x, e) => x * editing.locked[e].odd, 1); return Object.keys(p).reduce((x, m) => x * p[m].odd, l); };
+const slipCount = () => Object.keys(cur()).length + lockedList().length;
+async function copyText(t, b, done) {                       // works on http pages too (no clipboard API there)
+  let ok = false;
+  try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(t); ok = true; } } catch {}
+  if (!ok) { try { const a = document.createElement('textarea'); a.value = t; a.setAttribute('readonly', ''); a.style.cssText = 'position:fixed;top:0;left:0;opacity:0'; document.body.append(a); a.select(); a.setSelectionRange(0, 99999); ok = document.execCommand('copy'); a.remove(); } catch {} }
+  const old = b.textContent; b.textContent = ok ? (done || 'Copied ✓') : 'Press and hold to copy'; setTimeout(() => { b.textContent = old; }, 2200);
+}
 
 async function load() {
   try {
@@ -93,7 +103,7 @@ async function load() {
     S = j;
     if (S.nextId !== lastNext) {                                // kick-off: the old "next" round is now on TV, a new round is open
       const had = lastNext !== 0 && (Object.keys(picks).length > 0 || $('slip').open);
-      lastNext = S.nextId; picks = {}; openMore.clear();
+      lastNext = S.nextId; picks = {}; openMore.clear(); if (editing && !editing.real) { editing = null; renderEditBar(); }
       if (had && slipMode === 'v') { if ($('slip').open) $('slip').close(); toast('Kick-off! A new round is open. Pick again.', false); }
       renderList();
     }
@@ -108,8 +118,9 @@ async function loadReal() {
     const j = await r.json();
     if (!r.ok || !j.ok) throw new Error('bad');
     roff = j.now - Date.now(); R = j;
-    Object.keys(rpicks).forEach(id => { if (!R.events.some(e => e.id === id && !e.closed)) delete rpicks[id]; });
+    Object.keys(rpicks).forEach(id => { if (!(editing && editing.keep.has(id)) && !R.events.some(e => e.id === id && !e.closed)) delete rpicks[id]; });
     renderTop(); renderReal(); renderMine(); renderBtn();
+    if (curTk && curTk.real && $('ticketDlg').open) { const t = R.mine.find(x => x.id === curTk.id); if (t) openTicket(t, true); }
   } catch {}
   rLoading = false;
 }
@@ -164,7 +175,7 @@ function csSelect(it, redraw) {                      // pick which score to show
 function matchRow(it, ui, store, dis, redraw) {
   const m = MKTS.find(x => x.id === ui.mk) || MKTS[0], row = el('div', 'sp-row');
   const main = el('div', 'sp-main'), teams = el('div', 'sp-teams');
-  teams.append(teamBox(it.h, false), el('span', 'vs', 'vs'), teamBox(it.a, true));
+  teams.append(teamBox(it.h, false), it.sc ? el('span', 'vs sc' + (it.fin ? ' fin' : ' live'), it.sc[0] + ' - ' + it.sc[1]) : el('span', 'vs', 'vs'), teamBox(it.a, true));
   const odds = el('div', 'sp-odds');
   if (m.id === 'cs') { const [sel, pick] = csSelect(it, redraw), c = cell(it, store, dis, redraw, 'cs', pick, 'Correct score'); c.style.gridColumn = 'span 2'; odds.append(sel, c); }
   else if (m.k) { if (m.cols.length === 2) odds.append(el('span')); m.cols.forEach((c, i) => odds.append(cell(it, store, dis, redraw, m.k, i, c))); }
@@ -259,7 +270,7 @@ function paint() {
 }
 let lastDis = null;
 function renderBtn() {
-  const p = cur(), n = Object.keys(p).length, on = tab === 'v' || tab === 'r';
+  const n = slipCount(), on = tab === 'v' || tab === 'r';
   $('open').textContent = 'Betslip' + (n ? ' (' + n + ') · ' + total().toFixed(2) : '');
   $('open').disabled = !n || !on;
 }
@@ -282,12 +293,13 @@ function renderReal() {
   }
   note.hidden = true; box.replaceChildren();
   const all = R.events.map(ev => { const shut = ev.closed || now > ev.t - 60000;
-    return { id: ev.id, t: ev.t, lgn: ev.lg, h: rTeam(ev.h), a: rTeam(ev.a), o: ev.o, closed: shut,
-      meta: ev.lg + ' · ' + fmtClock(ev.t) + ' · ' + (now >= ev.t ? 'In play' : shut ? 'Closing' : 'in ' + until(ev.t - now)) }; }).sort((a, b) => a.t - b.t);
+    return { id: ev.id, t: ev.t, lgn: ev.lg, h: rTeam(ev.h), a: rTeam(ev.a), o: ev.o, closed: shut, sc: ev.sc || null, fin: !!ev.fin,
+      meta: ev.lg + ' · ' + fmtClock(ev.t) + ' · ' + (ev.fin ? 'Full time' : now >= ev.t ? (ev.sc ? '● LIVE' : 'Started') : shut ? 'Closing' : 'in ' + until(ev.t - now)) }; }).sort((a, b) => a.t - b.t);
   info.hidden = false;
   info.textContent = 'Today and the next 6 days. Kick-off times are in your time (' + (Intl.DateTimeFormat().resolvedOptions().timeZone || 'local') + ').' + (R.updated ? ' Odds updated ' + fmtClock(R.updated) + '.' : '');
   // day tabs (Today · Tomorrow · Mon 16 …) and league tabs
   const days = [...new Set(all.map(it => new Date(it.t).toDateString()))];
+  if (!dayInit && all.length) { dayInit = true; const td = new Date(now).toDateString(); if (days.includes(td)) ui.day = td; }     // open on TODAY's games first
   if (ui.day !== 'all' && !days.includes(ui.day)) ui.day = 'all';
   dtabs.replaceChildren();
   if (days.length) [['all', 'All days (' + all.length + ')'], ...days.map(d => { const f = all.find(it => new Date(it.t).toDateString() === d); return [d, dayWord(f.t) + ' (' + all.filter(it => new Date(it.t).toDateString() === d).length + ')']; })].forEach(([v, t]) => {
@@ -352,10 +364,10 @@ $('mkCode').onclick = async () => {
       body: JSON.stringify({ picks: Object.keys(p).map(e => ({ e, k: p[e].k, i: p[e].i })) }) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok || j.ok === false) { $('msg').textContent = errText(j.error); return; }
-    const link = location.origin + '/football#code=' + j.code, copy = (t, b) => { (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).catch(() => {}).then(() => { b.textContent = 'Copied'; }); };
+    const link = location.origin + '/football#code=' + j.code;
     out.replaceChildren(); out.hidden = false;
     const c1 = el('button', 'btn-n small', 'Copy code'), c2 = el('button', 'btn-n small ghost-n', 'Copy link'); c1.type = c2.type = 'button';
-    c1.onclick = () => copy(j.code, c1); c2.onclick = () => copy(link, c2);
+    c1.onclick = () => copyText(j.code, c1); c2.onclick = () => copyText(link, c2);
     out.append(el('span', 's-muted', 'Booking code'), el('b', '', j.code), c1, c2);
   } catch { $('msg').textContent = 'No connection. Try again.'; }
 };
@@ -379,18 +391,32 @@ function ticketCard(t, real) {
   return b;
 }
 function legs(t, real) { return real ? t.picks : (t.legs || []); }
+const LOCK_MS = 60000;                                                // a game is locked once it is 1 minute from kick-off (same as the server)
+const legStarted = (l) => !!l.t && Date.now() + roff >= l.t - LOCK_MS;
+function canEdit(t, real) {                                           // can still change something on this ticket?
+  if (real) return t.status === 'open' && !!R && R.on && t.picks.some(l => !legStarted(l));
+  return t.st === 'open' && !!S && S.enabled && nleft() > 1500;
+}
 function openTicket(t, real) {
+  curTk = { id: t.id, real };
   const box = $('tkBody'), L = legs(t, real), st = tStatus(t, real); box.replaceChildren();
   $('tkTitle').textContent = 'Ticket #' + String(t.id || '').slice(0, 8).toUpperCase();
-  const head = el('div', 'tk-head'); head.append(el('span', 'tk-st ' + st[0], st[1]), el('span', 's-muted', real ? 'Real matches' : 'Virtual · Round ' + t.round)); box.append(head);
+  const head = el('div', 'tk-head'); head.append(el('span', 'tk-st ' + st[0], st[1]), el('span', 's-muted', real ? 'Real matches' + (t.edits ? ' · edited ' + t.edits + '×' : '') : 'Virtual · Round ' + t.round)); box.append(head);
+  if (real && t.code) {                                                // booking code of THIS ticket: copy it and send it to a friend
+    const c = el('div', 'tk-code'), link = location.origin + '/football#code=' + t.code, b1 = el('button', 'btn-n small', 'Copy code'), b2 = el('button', 'btn-n small ghost-n', 'Copy link');
+    b1.type = b2.type = 'button'; b1.onclick = () => copyText(t.code, b1); b2.onclick = () => copyText(link, b2);
+    const lab = el('div'); lab.append(el('small', 's-muted', 'Booking code'), el('b', 'cd', t.code)); c.append(lab, b1, b2); box.append(c);
+  }
   if (!L.length) box.append(el('p', 'empty', 'This old ticket was saved before details were kept. It had ' + (t.n || '?') + ' picks.'));
   L.forEach(l => {
-    const r = RES[l.res] || RES.pend, d = el('div', 'tk-leg');
+    const started = real && l.res === 'pend' && legStarted(l);
+    const r = real && l.res === 'pend' && started ? ['live', l.live ? 'Live ' + l.live : 'Started'] : (RES[l.res] || RES.pend), d = el('div', 'tk-leg');
     const a = el('div', 'tk-l1'); a.append(el('b', '', l.h + ' v ' + l.a), el('span', 'tk-st ' + r[0], r[1]));
     const b = el('div', 'tk-l2'); b.append(el('span', '', mName(l.k) + ' · ' + pName(l.k, l.i)), el('b', '', '@ ' + Number(l.odd).toFixed(2)));
     d.append(a, b);
     if (l.score) d.append(el('div', 'tk-l3', 'Final score ' + l.score));
-    else if (real && l.t) d.append(el('div', 'tk-l3', 'Kick-off ' + fmtTime(l.t)));
+    else if (real && l.live && started) d.append(el('div', 'tk-l3 live', '● Score now ' + l.live));
+    else if (real && l.t) d.append(el('div', 'tk-l3', (started ? 'Started ' : 'Kick-off ') + fmtTime(l.t) + (real && t.status === 'open' && !started ? ' · you can still change this game' : (started && t.status === 'open' ? ' · locked' : ''))));
     box.append(d);
   });
   const sum = el('div', 'tk-sum'); const row = (a, b, cls) => { const r = el('div', 'row'); r.append(el('span', '', a), el('b', cls || '', b)); sum.append(r); };
@@ -398,9 +424,14 @@ function openTicket(t, real) {
   const open = real ? t.status === 'open' : (t.st === 'open' || t.st === 'live');
   if (open) row('Possible win', fmt(Math.floor(t.amount * t.odds)), 'win'); else if (t.win) row('Paid out', fmt(t.win), 'win'); else row('Paid out', t.status === 'void' ? fmt(t.amount) + ' (refund)' : '0');
   box.append(sum);
-  $('ticketDlg').showModal();
+  if (canEdit(t, real)) {
+    const eb = el('button', 'btn-n go', 'Edit this ticket'); eb.type = 'button'; eb.onclick = () => startEdit(t, real); box.append(eb);
+    box.append(el('p', 's-muted small', real ? 'Games that have not started can be changed or removed, and you can add new ones or change the stake. Started games stay locked.' : 'You can change this ticket until the round kicks off.'));
+  }
+  if (!$('ticketDlg').open) $('ticketDlg').showModal();
 }
 $('tkClose').onclick = () => $('ticketDlg').close();
+$('ticketDlg').addEventListener('close', () => { curTk = null; });
 function renderMine() {
   const box = $('mine'), rb = $('realMine'); box.replaceChildren(); rb.replaceChildren();
   let open = 0;
@@ -423,22 +454,55 @@ function renderResults() {
   const g = el('div', 'res-grid'); h.r.slice(lg * per, (lg + 1) * per).forEach(x => g.append(el('span', '', x))); box.append(g);
 }
 
+// ── editing a ticket that was already placed ────────────────
+function startEdit(t, real) {
+  $('ticketDlg').close();
+  if (real) {
+    rpicks = {}; const locked = {}, keep = new Set();
+    t.picks.forEach(l => { keep.add(l.e); const pk = { k: l.k, i: l.i, odd: l.odd, h: l.h, a: l.a, t: l.t }; if (legStarted(l)) locked[l.e] = pk; else rpicks[l.e] = pk; });
+    editing = { real: true, id: t.id, locked, keep }; slipMode = 'r'; setTab('r');
+  } else {
+    picks = {}; t.legs.forEach(l => { picks[l.m] = { k: l.k, i: l.i, odd: l.odd }; });
+    editing = { real: false, id: t.id, round: t.round, locked: {}, keep: new Set() }; slipMode = 'v'; setTab('v');
+  }
+  $('stake').value = String(t.amount);
+  renderEditBar(); real ? renderReal() : renderList(); renderBtn(); renderSlip(); $('slip').showModal();
+}
+function endEdit() {
+  const real = editing && editing.real; editing = null; if (real) rpicks = {}; else picks = {};
+  if ($('slip').open) $('slip').close();
+  renderEditBar(); real ? renderReal() : renderList(); renderBtn();
+}
+function renderEditBar() {
+  const bar = $('editBar'); bar.hidden = !editing; if (!editing) return;
+  bar.replaceChildren(el('b', '', 'Editing ticket #' + String(editing.id).slice(0, 6).toUpperCase()), el('span', 's-muted', ' Change games below (started games are locked), then save from the betslip.'));
+  const o = el('button', 'btn-n small', 'Open betslip'), c = el('button', 'btn-n small ghost-n', 'Cancel edit'); o.type = c.type = 'button';
+  o.onclick = () => { renderSlip(); $('slip').showModal(); }; c.onclick = endEdit; bar.append(o, c);
+}
+
 // ── betslip ─────────────────────────────────────────────────
 function legInfo(m) {
-  if (slipMode === 'r') { const ev = R.events.find(e => e.id === m); return ev ? { t: ev.h + ' v ' + ev.a } : { t: 'Match' }; }
+  if (slipMode === 'r') { const ev = R && R.events.find(e => e.id === m), pk = rpicks[m] || (editing && editing.locked[m]); return ev ? { t: ev.h + ' v ' + ev.a } : pk && pk.h ? { t: pk.h + ' v ' + pk.a } : { t: 'Match' }; }
   const f = NX.fx[m]; return { t: f.h.n + ' v ' + f.a.n };
 }
 function renderSlip() {
   const box = $('sels'), p = cur(); box.replaceChildren();
-  $('slipTitle').textContent = slipMode === 'r' ? 'Betslip · Real matches' : 'Betslip · Round ' + (NX ? NX.id : '');
+  const ed = editing && (editing.real === (slipMode === 'r')) ? editing : null;
+  $('slipTitle').textContent = (ed ? 'Edit ticket #' + String(ed.id).slice(0, 6).toUpperCase() : 'Betslip') + (slipMode === 'r' ? ' · Real matches' : ' · Round ' + (NX ? NX.id : ''));
+  $('place').textContent = ed ? 'Save changes' : 'Place bet';
+  lockedList().forEach(e => {                                         // started games: shown, cannot be removed
+    const L = editing.locked[e], row = el('div', 'sel locked'), l = el('div'), r = el('div');
+    l.append(el('b', '', L.h + ' v ' + L.a), el('span', '', mName(L.k) + ' · ' + pName(L.k, L.i) + ' · 🔒 started, locked'));
+    r.append(el('b', '', L.odd.toFixed(2))); row.append(l, r); box.append(row);
+  });
   Object.keys(p).forEach(m => {
     const row = el('div', 'sel'), l = el('div'), r = el('div');
     l.append(el('b', '', legInfo(m).t), el('span', '', mName(p[m].k) + ' · ' + pName(p[m].k, p[m].i)));
     const rm = el('button', '', 'Remove'); rm.type = 'button';
-    rm.onclick = () => { delete p[m]; slipMode === 'r' ? renderReal() : renderList(); renderBtn(); Object.keys(p).length ? renderSlip() : $('slip').close(); };
+    rm.onclick = () => { delete p[m]; slipMode === 'r' ? renderReal() : renderList(); renderBtn(); slipCount() ? renderSlip() : $('slip').close(); };
     r.append(el('b', '', p[m].odd.toFixed(2)), document.createElement('br'), rm); row.append(l, r); box.append(row);
   });
-  $('mkCode').hidden = slipMode !== 'r' || !Object.keys(p).length;
+  $('mkCode').hidden = slipMode !== 'r' || !Object.keys(p).length || !!ed;
   $('tot').textContent = total().toFixed(2);
   $('win').textContent = fmt(Math.floor(parseAmt($('stake').value) * total()));
 }
@@ -451,22 +515,26 @@ document.querySelectorAll('.chips [data-set]').forEach(b => b.onclick = () => {
 });
 $('place').onclick = async () => {
   if (busy) return;
-  const amount = parseAmt($('stake').value), p = cur(), real = slipMode === 'r';
+  const amount = parseAmt($('stake').value), p = cur(), real = slipMode === 'r', ed = editing && editing.real === real ? editing : null;
   if (amount < 1) { $('msg').textContent = ERR.bad_amount; return; }
   busy = true; $('place').disabled = true; $('msg').textContent = '';
   try {
-    const body = real
-      ? { amount, picks: Object.keys(p).map(e => ({ e, k: p[e].k, i: p[e].i })) }
-      : { round: S.nextId, amount, picks: Object.keys(p).map(m => ({ m: +m, k: p[m].k, i: p[m].i })) };
-    const r = await fetch(real ? '/football/real/bet' : '/football/bet', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify(body)
-    });
+    const all = real ? [...lockedList().map(e => ({ e, k: editing.locked[e].k, i: editing.locked[e].i })), ...Object.keys(p).map(e => ({ e, k: p[e].k, i: p[e].i }))]
+      : Object.keys(p).map(m => ({ m: +m, k: p[m].k, i: p[m].i }));
+    const body = real ? { amount, picks: all } : { round: S.nextId, amount, picks: all };
+    if (ed) body.id = ed.id;
+    const url = (ed ? (real ? '/football/real/edit' : '/football/edit') : (real ? '/football/real/bet' : '/football/bet'));
+    const r = await fetch(url, { method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok || j.ok === false) { $('msg').textContent = errText(j.error); if (j.error === 'stale') { picks = {}; load(); } }
+    if (!r.ok || j.ok === false) { $('msg').textContent = errText(j.error); if (j.error === 'stale') { picks = {}; load(); } if (j.error === 'locked_leg' || j.error === 'closed') loadReal(); }
     else {
-      Object.keys(p).forEach(k => delete p[k]); $('slip').close(); toast('Bet placed. Tap here to view your ticket.', false, true);
+      Object.keys(p).forEach(k => delete p[k]); editing = null; renderEditBar(); $('slip').close();
       real ? renderReal() : renderList(); renderBtn(); await Promise.all([load(), loadReal()]);
+      const find = () => { const mine = real ? (R && R.mine) : (S && S.mine); return mine && mine.find(x => x.id === j.id); };
+      let t = find(); if (!t) { await new Promise(r => setTimeout(r, 400)); await Promise.all([load(), loadReal()]); t = find(); }
+      if (t) openTicket(t, real);                                   // show the ticket right away, with its booking code to copy
+      else toast(ed ? 'Ticket updated.' : 'Bet placed.', false, true);
     }
   } catch { $('msg').textContent = 'No connection. Try again.'; }
   busy = false; $('place').disabled = false;
