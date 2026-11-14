@@ -154,3 +154,15 @@ dialog::backdrop { background: rgba(0,0,0,.65); }
 
 /* real matches: day headings */
 .day-sep { margin-top: 8px; padding: 6px 12px; font-size: .8rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #9db4e6; background: rgba(255,255,255,.04); }
+
+/* live / final score in the match row, ticket booking code, edit bar */
+.vs.sc { font-weight: 800; font-size: .85rem; padding-top: 3px; color: #fff; }
+.vs.sc.live { color: #ff6b7a; }
+.vs.sc.fin { color: #9aa3b8; }
+.tk-code { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; margin: 4px 0 8px; border-radius: 12px; background: #0b1020; border: 1.5px dashed #2ea8ff; }
+.tk-code > div { flex: 1 1 120px; display: flex; flex-direction: column; }
+.tk-code .cd { font-size: 1.5rem; letter-spacing: .18em; font-family: ui-monospace, Menlo, Consolas, monospace; color: #5ff0ff; user-select: all; }
+.tk-l3.live { color: #ff6b7a; font-weight: 700; }
+.sel.locked { opacity: .7; background: rgba(255,255,255,.03); }
+.editbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; padding: 10px 12px; border-color: #ffc400; }
+.editbar .s-muted { flex: 1 1 200px; font-size: .8rem; }
