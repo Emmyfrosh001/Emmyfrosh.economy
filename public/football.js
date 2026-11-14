@@ -38,9 +38,10 @@ const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls)
 // ── markets (Sporty-style) ──────────────────────────────────
 const lineOf = (k) => Number(k.slice(1)) / 10;                       // 'o25' → 2.5
 const L1 = (k) => lineOf(k).toFixed(1);
-const mName = (k) => ({ x: '1X2', u1: '1X2 - 1UP', u2: '1X2 - 2UP', dc: 'Double chance', gg: 'GG / NG', cs: 'Correct score' }[k]) || ({ o: 'Goals O/U ', h: 'Home goals O/U ', a: 'Away goals O/U ' }[k[0]] + L1(k));
+const mName = (k) => ({ x: '1X2', u1: '1X2 - 1UP', u2: '1X2 - 2UP', dc: 'Double chance', dnb: 'Draw no bet', gg: 'GG / NG', cs: 'Correct score' }[k]) || ({ o: 'Goals O/U ', h: 'Home goals O/U ', a: 'Away goals O/U ' }[k[0]] + L1(k));
 const pName = (k, i) => {
   if (k === 'x' || k === 'u1' || k === 'u2') return ['Home', 'Draw', 'Away'][i];
+  if (k === 'dnb') return ['Home (draw = money back)', 'Away (draw = money back)'][i];
   if (k === 'dc') return ['Home or Draw', 'Home or Away', 'Draw or Away'][i];
   if (k === 'gg') return ['GG (both teams score)', 'NG (not both score)'][i];
   if (k === 'cs') { const c = (S && S.cs) || []; return c[i] === 'Other' || c[i] === undefined ? 'Any other score' : 'Score ' + c[i]; }
@@ -51,6 +52,7 @@ const MKTS = [
   { id: 'u1', name: '1X2 - 1UP', k: 'u1', cols: ['1', 'X', '2'] },
   { id: 'u2', name: '1X2 - 2UP', k: 'u2', cols: ['1', 'X', '2'] },
   { id: 'dc', name: 'Double chance', k: 'dc', cols: ['1X', '12', 'X2'] },
+  { id: 'dnb', name: 'Draw no bet', k: 'dnb', cols: ['1', '2'] },
   { id: 'ou', name: 'Goals O/U', p: 'o', cols: ['Over', 'Under'] },
   { id: 'tg', name: 'Home / Away Over', p: 'ha', cols: ['Home Over', 'Away Over'] },
   { id: 'gg', name: 'GG / NG', k: 'gg', cols: ['GG', 'NG'] },
@@ -64,7 +66,7 @@ const near = (o, p) => { const ks = keysOf(o, p).filter(k => o[k][0] != null && 
 // S = light state polled every second · NX = next round (odds, open to bet) · CU = current round (on TV) · RC / HI = past tickets / results
 let S = null, NX = null, CU = null, RC = [], HI = [], rsId = 0, R = null, off = 0, roff = 0, tab = 'v', slipMode = 'v';
 let picks = {}, rpicks = {}, watched = 0, lastNext = 0, lastCur = 0, busy = false, fails = 0, rLoading = false;
-const UI = { v: { mk: 'x', lg: 0, line: 'near' }, r: { mk: 'x', line: 'near' } }, rowLine = {}, rowCs = {}, openMore = new Set();
+const UI = { v: { mk: 'x', lg: 0, line: 'near' }, r: { mk: 'x', lg: 'all', line: 'near' } }, rowLine = {}, rowCs = {}, openMore = new Set();
 const serverNow = () => Date.now() + off;
 const nleft = () => S ? S.nextKick - serverNow() : 0;
 function cphase() {                                           // the round that is on TV
@@ -179,7 +181,7 @@ function matchRow(it, ui, store, dis, redraw) {
   foot.append(more, el('span', 'st', it.meta || ''));
   row.append(main, foot);
   if (openMore.has(it.id)) {
-    const box = el('div', 'sp-more'), order = ['x', 'u1', 'u2', 'dc', 'gg', ...keysOf(it.o, 'o'), ...keysOf(it.o, 'h'), ...keysOf(it.o, 'a'), 'cs'];
+    const box = el('div', 'sp-more'), order = ['x', 'u1', 'u2', 'dc', 'dnb', 'gg', ...keysOf(it.o, 'o'), ...keysOf(it.o, 'h'), ...keysOf(it.o, 'a'), 'cs'];
     order.filter(k => it.o[k]).forEach(k => {
       const r = el('div', 'mrow'); r.append(el('span', 'ml', mName(k)));
       const g = el('div', 'mc' + (k === 'cs' ? ' cs' : '')); it.o[k].forEach((_, i) => { const c = cell(it, store, dis, redraw, k, i); c.prepend(el('small', '', k === 'cs' ? (S.cs[i] || '') : pName(k, i))); g.append(c); }); r.append(g); box.append(r);
@@ -264,20 +266,40 @@ function renderBtn() {
 
 // ── real matches ────────────────────────────────────────────
 const fmtTime = (t) => new Date(t).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+const fmtClock = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const dayLabel = (t) => {                                    // Today / Tomorrow / Mon 16 Nov (in the player's own time zone)
+  const d = new Date(t), n = new Date(), tm = new Date(n.getTime() + 86400000), same = (a, b) => a.toDateString() === b.toDateString();
+  return same(d, n) ? 'Today' : same(d, tm) ? 'Tomorrow' : d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
+};
+const until = (ms) => { const m = Math.max(0, Math.round(ms / 60000)); return m < 60 ? m + 'm' : m < 1440 ? Math.floor(m / 60) + 'h ' + String(m % 60).padStart(2, '0') + 'm' : Math.floor(m / 1440) + 'd ' + Math.floor(m % 1440 / 60) + 'h'; };
 const rTeam = (n) => ({ n, c: n.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase(), col: '#64748b', st: 0 });
 function renderReal() {
-  const box = $('rlist'), note = $('rnote'); if (!R) return;
-  const now = Date.now() + roff, ui = UI.r;
-  if (R.setup || !R.on) { note.hidden = false; note.replaceChildren(el('strong', '', 'Real matches are not switched on yet.'), el('span', 's-muted', ' Please check again later. The virtual TV is open.')); box.replaceChildren(); $('mkTabsR').replaceChildren(); return; }
+  const box = $('rlist'), note = $('rnote'), info = $('rinfo'); if (!R) return;
+  const now = Date.now() + roff, ui = UI.r, tabs = $('lgTabsR');
+  if (R.setup || !R.on) {
+    note.hidden = false; info.hidden = true; box.replaceChildren(); $('mkTabsR').replaceChildren(); tabs.replaceChildren();
+    note.replaceChildren(el('strong', '', R.setup ? 'Real matches are not switched on yet.' : 'Betting is closed right now.'), el('span', 's-muted', ' Please check again later. The virtual TV is open.'));
+    return;
+  }
   note.hidden = true; box.replaceChildren();
-  const items = R.events.map(ev => ({ id: ev.id, lgn: ev.lg, h: rTeam(ev.h), a: rTeam(ev.a), o: ev.o, closed: ev.closed || now > ev.t - 60000,
-    meta: fmtTime(ev.t) + (now >= ev.t ? ' · In play' : ev.closed || now > ev.t - 60000 ? ' · Closing' : '') }));
+  const items = R.events.map(ev => { const shut = ev.closed || now > ev.t - 60000;
+    return { id: ev.id, t: ev.t, lgn: ev.lg, h: rTeam(ev.h), a: rTeam(ev.a), o: ev.o, closed: shut,
+      meta: fmtClock(ev.t) + ' · ' + (now >= ev.t ? 'In play' : shut ? 'Closing' : 'starts in ' + until(ev.t - now)) }; });
+  info.hidden = false;
+  info.textContent = 'Kick-off times are in your time (' + (Intl.DateTimeFormat().resolvedOptions().timeZone || 'local') + ').' + (R.updated ? ' Odds updated ' + fmtClock(R.updated) + '.' : '');
+  const lgs = [...new Set(items.map(it => it.lgn))];
+  if (ui.lg !== 'all' && !lgs.includes(ui.lg)) ui.lg = 'all';
+  tabs.replaceChildren();
+  if (lgs.length > 1) [['all', 'All (' + items.length + ')'], ...lgs.map(l => [l, l])].forEach(([v, t]) => {
+    const b = el('button', 'lt', t); b.type = 'button'; b.setAttribute('aria-selected', String(ui.lg === v)); b.onclick = () => { ui.lg = v; renderReal(); }; tabs.append(b);
+  });
   marketTabs($('mkTabsR'), ui, items, renderReal);
   if (!MKTS.some(m => m.id === ui.mk && items.some(it => hasM(it.o, m)))) ui.mk = 'x';
   if (!items.length) return box.append(el('p', 'empty', R.updated ? 'No real matches to bet on right now. New fixtures appear here automatically.' : 'Loading real fixtures…'));
-  [...new Set(items.map(it => it.lgn))].forEach(lg => {
-    const g = items.filter(it => it.lgn === lg); box.append(leagueHead(lg, ui, g, renderReal));
-    g.forEach(it => box.append(matchRow(it, ui, rpicks, it.closed || !R.on, renderReal)));
+  lgs.filter(lg => ui.lg === 'all' || ui.lg === lg).forEach(lg => {
+    const g = items.filter(it => it.lgn === lg).sort((a, b) => a.t - b.t); box.append(leagueHead(lg, ui, g, renderReal));
+    let day = '';
+    g.forEach(it => { const d = dayLabel(it.t); if (d !== day) { day = d; box.append(el('div', 'day-sep', d)); } box.append(matchRow(it, ui, rpicks, it.closed || !R.on, renderReal)); });
   });
 }
 
