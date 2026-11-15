@@ -35,6 +35,7 @@
           <button class="tab" data-tab="chats" role="tab">Chats<span class="tab-badge" id="chatBadge" hidden></span></button>
           <button class="tab" data-tab="accounts" role="tab">Accounts</button>
           <button class="tab" data-tab="game" role="tab">Game</button>
+          <button class="tab" data-tab="football" role="tab">Football</button>
           <button class="tab" data-tab="coupons" role="tab">Coupons</button>
           <button class="tab" data-tab="activity" role="tab">Activity</button>
         </nav>
@@ -205,6 +206,34 @@
         </div>
         <p class="empty" id="gWaitEmpty" hidden>Nothing waiting. Everything is settled.</p>
         <p><button id="gReset" class="btn small ghost" type="button">Reset totals</button></p>
+      </section>
+
+      <!-- football -->
+      <section id="tab-football" class="panel" hidden>
+        <h2>Football</h2>
+        <p class="hint">Lock football for everybody, lock only one room, switch live betting on or off, and choose Easy, Normal or Hard. A locked room shows a lock to players instead of the games. Tickets already placed are still paid.</p>
+        <div class="stats" id="fStats"></div>
+
+        <h3>Settings</h3>
+        <form id="fbForm" class="editor" autocomplete="off">
+          <label for="fOn">Football (everything)</label>
+          <select id="fOn"><option value="1">Open — players can enter</option><option value="0">Locked — nobody can play or enter</option></select>
+          <label for="fVirt">Virtual TV room</label>
+          <select id="fVirt"><option value="1">Open</option><option value="0">Locked</option></select>
+          <label for="fReal">Real matches room</label>
+          <select id="fReal"><option value="1">Open</option><option value="0">Locked</option></select>
+          <label for="fLive">Live betting (games already started)</label>
+          <select id="fLive"><option value="1">On — players can bet on live games</option><option value="0">Off — live games are locked</option></select>
+          <label for="fMode">Difficulty</label>
+          <select id="fMode"></select>
+          <p class="hint" id="fModeNote"></p>
+          <label for="fMin">Smallest stake</label>
+          <input id="fMin" type="text" inputmode="text" placeholder="1, 100, 1k">
+          <label for="fMax">Biggest stake (empty = no limit)</label>
+          <input id="fMax" type="text" inputmode="text" placeholder="no limit, 50k, 1m">
+          <button type="submit" class="btn primary">Save football settings</button>
+        </form>
+        <p class="hint" id="fApi"></p>
       </section>
 
       <!-- coupons -->
