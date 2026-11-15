@@ -1,8 +1,8 @@
 'use strict';
 // ================================================================
 // Virtual football (TV) engine — zero dependencies, same wallet rules as the crash plane.
-//   • One shared timetable for everybody: a new round kicks off every 90s. The NEXT round is always open for
-//     betting (1:30 countdown) while the CURRENT round is on TV: PLAY (45s = 90 match minutes) → FULL TIME (7s)
+//   • One shared timetable for everybody: a new round kicks off every 3 minutes. The NEXT round is always open for
+//     betting (3:00 countdown) while the CURRENT round is on TV: PLAY (90s = 90 match minutes) → FULL TIME (10s)
 //   • 80 matches per round: 20 in each of 4 leagues (England, Spain, Germany, Champions), 40 teams per league.
 //     Markets: 1X2, 1UP, 2UP, double chance, GG/NG, correct score, goals Over/Under (0.5-6.5), home / away Over/Under.
 //     The SERVER draws every result and every goal minute; the browser only plays it.
@@ -17,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const EVERY = 90000, PLAY_MS = 45000, END_MS = 7000;   // a new round kicks off every EVERY ms
+const EVERY = 180000, PLAY_MS = 90000, END_MS = 10000;   // a new round kicks off every EVERY ms (3 minutes). On TV: PLAY 90s (1 second = 1 match minute) → FULL TIME 10s → rest
 const MAX_STAKE = 1e12, MAX_WIN = 1e14, MAX_PICKS = 10, MAX_BETS = 8, PER = 20, CAP = 6;
 // virtual markets (every market is an array of odds):
 //   x = 1X2 · u1 / u2 = 1X2 with 1UP / 2UP early payout · dc = double chance (1X, 12, X2) · gg = GG / NG (both teams score)
@@ -62,7 +62,9 @@ function autoColor(name) {                          // a steady colour per club 
 }
 const LG = LGDATA.map(([n, ts]) => [n, ts.map(([tn, c, sv]) => { const s = Number(sv); return { n: tn, c, col: KNOWN[c] || autoColor(tn), s, st: Math.max(1, Math.min(5, Math.round((s - 1) / .95 * 4) + 1)) }; })]);
 const MATCHES = LG.length * PER;
-const DEFAULTS = { enabled: true, edge: 0.08, minBet: 1, maxBet: 0 };   // edge = share the house keeps; maxBet 0 = no limit
+// difficulty = how much the house keeps. v = virtual TV · r = real matches (taken off the real bookmaker prices)
+const MODES = { easy: { label: 'Easy', v: 0.04, r: 0 }, normal: { label: 'Normal', v: 0.08, r: null }, hard: { label: 'Hard', v: 0.15, r: null } };   // r: null = filled in below from REAL_EDGE
+const DEFAULTS = { enabled: true, virtual: true, real: true, live: true, mode: 'normal', minBet: 1, maxBet: 0 };   // enabled = master lock · maxBet 0 = no limit
 
 const rnd = () => crypto.randomInt(0, 1e9) / 1e9;
 const poisson = (l) => { const L = Math.exp(-l); let k = 0, p = 1; do { k++; p *= rnd(); } while (p > L); return k - 1; };
@@ -75,8 +77,8 @@ function cleanSettings(s) {
   const minBet = Math.max(1, int(s.minBet, DEFAULTS.minBet));
   let maxBet = int(s.maxBet, DEFAULTS.maxBet);
   if (maxBet && maxBet < minBet) maxBet = minBet;
-  let edge = Number(s.edge); if (!Number.isFinite(edge) || edge < 0 || edge > 0.4) edge = DEFAULTS.edge;
-  return { enabled: s.enabled !== false, edge, minBet, maxBet };
+  const mode = MODES[s.mode] ? s.mode : 'normal', on = (v, d) => v === undefined ? d : v !== false && v !== 0 && v !== '0';
+  return { enabled: on(s.enabled, true), virtual: on(s.virtual, true), real: on(s.real, true), live: on(s.live, true), mode, edge: MODES[mode].v, minBet, maxBet };
 }
 
 module.exports = function createFootball(opts) {
@@ -90,6 +92,8 @@ module.exports = function createFootball(opts) {
   if (!store.ledger || typeof store.ledger !== 'object') store.ledger = {};
   if (!store.recent || typeof store.recent !== 'object') store.recent = {};
   if (!Array.isArray(store.history)) store.history = [];
+  if (!store.logos || typeof store.logos !== 'object') store.logos = {};
+  if (!store.logoMiss || typeof store.logoMiss !== 'object') store.logoMiss = {};
   store.settings = cleanSettings(store.settings);
   const real = store.real = Object.assign({ events: {}, bets: [], lastFetch: 0, lastError: '', credits: null, diag: {}, codes: {}, stats: { staked: 0, paid: 0 } }, store.real || {});
   if (!real.events || typeof real.events !== 'object') real.events = {};
@@ -246,7 +250,7 @@ module.exports = function createFootball(opts) {
   }
   function placeBet(acc, body) {
     const s = store.settings;
-    if (!s.enabled) return { status: 400, error: 'game_off' };
+    if (!s.enabled || !s.virtual) return { status: 400, error: 'game_off' };
     if (Number(body.round) !== nxt.id) return { status: 400, error: 'stale' };
     if (Date.now() >= nxt.kick - 1000) return { status: 400, error: 'closed' };
     const amount = Math.floor(Number(body.amount));
@@ -264,6 +268,7 @@ module.exports = function createFootball(opts) {
     ledger(acc.number, w.jid, w.name).pending -= amount;                                         // the stake leaves the wallet right now
     store.stats.staked += amount;
     const b = { id: crypto.randomBytes(6).toString('hex'), number: acc.number, jid: w.jid, name: w.name || acc.name, picks, amount, odds, win: null };
+    b.code = saveVCode(nxt, picks, acc.number);
     store.inflight[b.id] = { number: acc.number, jid: w.jid, name: b.name, amount };
     nxt.bets.push(b); touch();
     return { status: 200, id: b.id };
@@ -271,7 +276,7 @@ module.exports = function createFootball(opts) {
   // change a virtual ticket while its round is still open for betting (the round has not kicked off)
   function editBet(acc, body) {
     const s = store.settings;
-    if (!s.enabled) return { status: 400, error: 'game_off' };
+    if (!s.enabled || !s.virtual) return { status: 400, error: 'game_off' };
     if (Number(body.round) !== nxt.id) return { status: 400, error: 'stale' };
     if (Date.now() >= nxt.kick - 1000) return { status: 400, error: 'closed' };
     const b = nxt.bets.find(x => x.id === String(body.id) && x.number === acc.number);
@@ -287,7 +292,30 @@ module.exports = function createFootball(opts) {
     if (diff) { ledger(acc.number, b.jid, b.name).pending -= diff; store.stats.staked += diff; }
     b.picks = picks; b.amount = amount; b.odds = Math.round(picks.reduce((x, p) => x * p.odd, 1) * 100) / 100;
     if (store.inflight[b.id]) store.inflight[b.id].amount = amount;
+    b.code = saveVCode(nxt, picks, acc.number);
     touch(); return { status: 200, id: b.id };
+  }
+
+  // ── virtual booking codes: share the picks of the OPEN round. A code works until that round kicks off (then it shows as expired).
+  //    7 letters / numbers (real-match codes have 6, so the two never mix up).
+  const vcodes = {};
+  function saveVCode(r, picks, number) {
+    let code; do { code = Array.from({ length: 7 }, () => CODE_CHARS[crypto.randomInt(0, CODE_CHARS.length)]).join(''); } while (vcodes[code]);
+    vcodes[code] = { round: r.id, kick: r.kick, by: number, at: Date.now(), picks: picks.map(p => { const f = r.fx[p.m]; return { m: p.m, k: p.k, i: p.i, h: f.h.n, a: f.a.n, lg: LG[f.lg][0] }; }) };
+    const keys = Object.keys(vcodes); if (keys.length > 3000) keys.forEach(k => { if (vcodes[k].round < r.id - 3) delete vcodes[k]; });
+    return code;
+  }
+  function makeVCode(acc, body) {
+    if (!store.settings.enabled || !store.settings.virtual) return { status: 400, error: 'game_off' };
+    if (Number(body.round) !== nxt.id) return { status: 400, error: 'stale' };
+    const picks = vPicks(body.picks); if (!picks) return { status: 400, error: 'bad_picks' };
+    return { status: 200, code: saveVCode(nxt, picks, acc.number) };
+  }
+  function vCodeView(code) {
+    code = String(code).toUpperCase(); const c = vcodes[code]; if (!c) return null;
+    const now = Date.now(), live = c.round === nxt.id, status = live ? (now < nxt.kick - 1000 ? 'open' : 'closed') : 'expired';
+    return { ok: true, virtual: true, now, code, round: c.round, nextId: nxt.id, status, kick: c.kick,
+      legs: c.picks.map(p => ({ m: p.m, k: p.k, i: p.i, h: p.h, a: p.a, lg: p.lg, odd: live ? (nxt.fx[p.m].o[p.k] || [])[p.i] || null : null })) };
   }
 
 
@@ -300,7 +328,7 @@ module.exports = function createFootball(opts) {
   const AUTO = /^auto$/i.test(LEAGUES_RAW);
   const LEAGUES = AUTO ? [] : LEAGUES_RAW.split(',').map(x => x.trim()).filter(Boolean);
   const AUTO_MAX = Math.max(1, Number(process.env.REAL_AUTO_MAX) || 25);                         // leagues fetched (every league in season, big ones first)
-  const LIVE_MS = Math.max(60, Number(process.env.REAL_LIVE_SEC) || 180) * 1000;                  // live-score check while games are in play (1-2 credits per league with a game on)
+  const LIVE_MS = Math.max(60, Number(process.env.REAL_LIVE_SEC) || 90) * 1000;                  // live-score check while games are in play (1-2 credits per league with a game on)
   const EMPTY_SKIP_MS = 6 * 3600000;                                                              // a league with no games in the next DAYS is not asked again for 6h (saves credits)
   const DAYS = Math.min(14, Math.max(1, Number(process.env.REAL_DAYS) || 7));                  // today + the next DAYS-1 days
   const FIRST = ['soccer_epl', 'soccer_uefa_champs_league', 'soccer_spain_la_liga', 'soccer_italy_serie_a', 'soccer_germany_bundesliga', 'soccer_france_ligue_one',
@@ -321,6 +349,8 @@ module.exports = function createFootball(opts) {
     soccer_uefa_europa_league: 'Europa League', soccer_efl_champ: 'Championship', soccer_netherlands_eredivisie: 'Eredivisie',
     soccer_portugal_primeira_liga: 'Primeira Liga', soccer_africa_cup_of_nations: 'AFCON', soccer_fifa_world_cup: 'World Cup' };
   let REAL_EDGE = Number(process.env.REAL_EDGE); if (!Number.isFinite(REAL_EDGE) || REAL_EDGE < 0 || REAL_EDGE > 0.3) REAL_EDGE = 0.03;   // share trimmed off the real odds
+  const R_EDGE = { easy: 0, normal: REAL_EDGE, hard: Math.min(0.3, REAL_EDGE + 0.05) };
+  MODES.normal.r = R_EDGE.normal; MODES.hard.r = R_EDGE.hard; MODES.easy.r = R_EDGE.easy;
   const REFRESH_MS = Math.max(10, Number(process.env.REAL_REFRESH_MIN) || 180) * 60000;
   const CLOSE_MS = 60000, MIN_END_MS = 125 * 60000, VOID_MS = 60 * 3600000, MAX_REAL_OPEN = 20;
   const API = 'https://api.the-odds-api.com/v4/sports/';
@@ -447,7 +477,7 @@ module.exports = function createFootball(opts) {
   const legRes = (p) => {
     const ev = real.events[p.e];
     if (!ev || ev.status === 'void') return { res: 'void' };
-    if (ev.status !== 'done') return ev.live && Date.now() >= ev.t ? { res: 'pend', live: ev.live.gh + '-' + ev.live.ga } : { res: 'pend' };
+    if (ev.status !== 'done') return Date.now() >= ev.t ? { res: 'pend', live: ev.live ? ev.live.gh + '-' + ev.live.ga : null, ck: clockOf(ev) } : { res: 'pend' };
     return { res: realLeg(ev, p.k, p.i), score: ev.gh + '-' + ev.ga };
   };
   function settleBets() {
@@ -460,6 +490,152 @@ module.exports = function createFootball(opts) {
       b.done = Date.now(); touch();
     }
   }
+  // ═══════ LIVE games: clock, live prices, betting while a game is being played ═══════
+  // A live game can be bet on only while its score AND its prices are fresh, and never straight after a goal until new prices arrive
+  // (otherwise someone watching TV could bet at the old price). The owner can switch live betting off in the admin page.
+  const LIVE_FRESH_MS = 2 * LIVE_MS + 20000;
+  const FINISHED = new Set(['FT', 'AET', 'PEN']);
+  function setLive(ev, gh, ga, min, st, src) {
+    const now = Date.now(), o = ev.live;
+    if ((!o && gh + ga > 0) || (o && (o.gh !== gh || o.ga !== ga))) ev.scAt = now;          // a goal: bets stay paused until prices from AFTER it arrive
+    ev.live = { gh, ga, at: now, min: Number.isFinite(min) ? min : null, st: st || null, src };
+    touch();
+  }
+  // → null (not started) or { ph: '1H' | 'HT' | '2H' | 'ET' | 'FT', min, plus, left, est }   est = worked out from kick-off, not from a data feed
+  function clockOf(ev, now) {
+    now = now || Date.now();
+    const l = ev.live, feed = l && l.st && now - l.at < 6 * 60000;
+    if (now < ev.t && !feed) return null;
+    let ph, min, est = !feed;
+    if (feed) {
+      ph = FINISHED.has(l.st) ? 'FT' : ['BT', 'P'].includes(l.st) ? 'ET' : l.st; min = Number.isFinite(l.min) ? l.min : (ph === '2H' ? 46 : 1);
+      if (ph === '1H' || ph === '2H') min += Math.floor((now - l.at) / 60000);              // keeps ticking between two polls
+      if (ph === 'HT') min = 45;
+    } else {
+      const e = (now - ev.t) / 60000;
+      if (e < 45) { ph = '1H'; min = Math.floor(e) + 1; } else if (e < 60) { ph = 'HT'; min = 45; } else { ph = '2H'; min = 45 + Math.floor(e - 60) + 1; }
+    }
+    const cap = ph === '1H' ? 45 : ph === '2H' ? 90 : 0, plus = cap && min > cap ? min - cap : 0;
+    if (cap) min = Math.min(min, cap);
+    return { ph, min, plus, est, left: ph === '1H' || ph === '2H' ? Math.max(0, 90 - min) : ph === 'HT' ? 45 : 0 };
+  }
+  // can this game take a bet right now?  → { ok, why }
+  function canBet(ev, now) {
+    now = now || Date.now();
+    if (!ev || ev.status !== 'open') return { ok: false, why: 'closed' };
+    if (now <= ev.t - CLOSE_MS) return { ok: true };
+    if (now < ev.t) return { ok: false, why: 'closed' };                                      // the last minute before kick-off
+    if (!store.settings.live) return { ok: false, why: 'live_off' };
+    const l = ev.live, c = clockOf(ev, now);
+    if (c && (c.ph === 'FT' || c.ph === 'ET' || (c.ph === '2H' && c.min >= 85))) return { ok: false, why: 'closed' };
+    if (!l || now - l.at > LIVE_FRESH_MS || !ev.oddsAt || now - ev.oddsAt > LIVE_FRESH_MS || ev.oddsAt < (ev.scAt || 0)) return { ok: false, why: 'live_wait' };
+    return { ok: true };
+  }
+  const isStarted = (ev, now) => (now || Date.now()) >= ev.t;
+  // the prices players see: the real prices, moved by the difficulty (easy / normal / hard). On a live game, lines that are already decided are removed.
+  function oddsFor(ev) {
+    const f = (1 - R_EDGE[store.settings.mode]) / (1 - REAL_EDGE), live = isStarted(ev), l = live && ev.live ? ev.live : { gh: 0, ga: 0 }, out = {};
+    for (const [k, arr] of Object.entries(ev.o || {})) {
+      if (live && /^[oha]\d+$/.test(k)) { const g = k[0] === 'o' ? l.gh + l.ga : k[0] === 'h' ? l.gh : l.ga; if (g > ouLine(k)) continue; }
+      out[k] = arr.map(v => v == null ? null : Math.min(100, Math.max(1.01, Math.round(v * f * 100) / 100)));
+    }
+    return out;
+  }
+  let liveBusy = false;
+  async function refreshLiveOdds() {                                                          // fresh prices for the games being played right now
+    if (!ODDS_KEY || liveBusy || !store.settings.live) return; liveBusy = true;
+    try {
+      const now = Date.now(), lgs = [...new Set(Object.values(real.events).filter(ev => ev.status === 'open' && now >= ev.t && now < ev.t + 130 * 60000).map(ev => ev.lg))];
+      if (!lgs.length || creditsLow(MIN_CREDITS)) return;
+      for (const lg of lgs) {
+        try {
+          const list = await getJson(API + encodeURIComponent(lg) + '/odds/?apiKey=' + encodeURIComponent(ODDS_KEY) + '&regions=' + REGIONS + '&markets=h2h,totals&oddsFormat=decimal&dateFormat=iso');
+          for (const e of Array.isArray(list) ? list : []) {
+            const ev = real.events[e.id]; if (!ev || ev.status !== 'open' || Date.now() < ev.t) continue;
+            const o = parseOdds(e); if (!o.x) continue;
+            ev.base = o; ev.ex = {}; compose(ev); ev.oddsAt = Date.now(); touch();
+          }
+        } catch (x) { real.lastError = String(x.message || x).slice(0, 120); }
+      }
+    } finally { liveBusy = false; }
+  }
+
+  // ── optional 2nd API: API-Football (api-sports.io) → exact match minute, quicker live scores, H2H and live statistics. Key: FOOTBALL_API_KEY
+  const AF_KEY = String(process.env.FOOTBALL_API_KEY || process.env.API_FOOTBALL_KEY || '').trim();
+  const AF = 'https://v3.football.api-sports.io', AF_LIVE_MS = Math.max(30, Number(process.env.FOOTBALL_LIVE_SEC) || 60) * 1000;
+  const afInfo = { left: null, at: 0, error: '' };
+  async function afGet(p) {
+    const r = await fetch(AF + p, { headers: { 'x-apisports-key': AF_KEY }, signal: AbortSignal.timeout(15000) });
+    const left = r.headers.get('x-ratelimit-requests-remaining'); if (left !== null && left !== '' && Number.isFinite(Number(left))) { afInfo.left = Number(left); afInfo.at = Date.now(); }
+    if (!r.ok) throw new Error('football api ' + r.status);
+    const j = await r.json(), er = j && j.errors;
+    if (er && (Array.isArray(er) ? er.length : Object.keys(er).length)) throw new Error('football api: ' + JSON.stringify(er).slice(0, 100));
+    return Array.isArray(j.response) ? j.response : [];
+  }
+  const STOP = new Set(['fc', 'cf', 'afc', 'sc', 'ac', 'as', 'ss', 'ssc', 'fk', 'sk', 'bk', 'club', 'de', 'cd', 'ud', 'the', 'calcio']);
+  const toks = (n) => String(n || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(x => x && !STOP.has(x));
+  function sameTeam(a, b) {
+    const x = toks(a), y = toks(b); if (!x.length || !y.length) return false;
+    const sx = x.join(' '), sy = y.join(' '); if (sx === sy) return true;
+    if (sx.length >= 4 && sy.length >= 4 && (sx.includes(sy) || sy.includes(sx))) return true;
+    const n = x.filter(t => y.includes(t)).length; return n >= 1 && n / Math.max(x.length, y.length) >= 0.5;
+  }
+  const fxMatches = (ev, f) => f && f.teams && f.fixture && sameTeam(ev.h, f.teams.home.name) && sameTeam(ev.a, f.teams.away.name) && Math.abs(Date.parse(f.fixture.date) - ev.t) < 3 * 3600000;
+  const afLink = (ev, f) => { ev.afId = f.fixture.id; ev.afH = f.teams.home.id; ev.afA = f.teams.away.id; if (f.teams.home.logo && !store.logos[ev.h]) store.logos[ev.h] = f.teams.home.logo; if (f.teams.away.logo && !store.logos[ev.a]) store.logos[ev.a] = f.teams.away.logo; };
+  let afBusy = false;
+  async function afLive() {                                                                    // ONE call gives every live game in the world
+    if (!AF_KEY || afBusy) return;
+    const now = Date.now(), evs = Object.values(real.events).filter(ev => ev.status === 'open' && now >= ev.t - 5 * 60000 && now < ev.t + 150 * 60000);
+    if (!evs.length) return; afBusy = true;
+    try {
+      for (const f of await afGet('/fixtures?live=all')) {
+        const ev = evs.find(e => e.afId === f.fixture.id) || evs.find(e => fxMatches(e, f)); if (!ev) continue;
+        afLink(ev, f);
+        const gh = f.goals && f.goals.home, ga = f.goals && f.goals.away, st = f.fixture.status || {};
+        if (Number.isInteger(gh) && Number.isInteger(ga)) setLive(ev, gh, ga, st.elapsed, st.short, 'af');
+      }
+      afInfo.error = '';
+    } catch (x) { afInfo.error = String(x.message || x).slice(0, 120); }
+    finally { afBusy = false; }
+  }
+  const afDay = {}, h2hCache = new Map(), statCache = new Map();
+  async function afFindId(ev) {
+    if (ev.afId) return true;
+    const d = new Date(ev.t).toISOString().slice(0, 10); let c = afDay[d];
+    if (!c || Date.now() - c.at > 3600000) c = afDay[d] = { at: Date.now(), list: await afGet('/fixtures?date=' + d) };
+    const f = c.list.find(x => fxMatches(ev, x)); if (!f) return false;
+    afLink(ev, f); touch(); return true;
+  }
+  const STAT_ROWS = [['Ball Possession', 'Possession'], ['Total Shots', 'Shots'], ['Shots on Goal', 'Shots on target'], ['Corner Kicks', 'Corners'], ['Fouls', 'Fouls'],
+    ['Yellow Cards', 'Yellow cards'], ['Red Cards', 'Red cards'], ['Goalkeeper Saves', 'Saves'], ['Offsides', 'Offsides']];
+  async function infoView(ev) {                                                                // what the (i) / chart icon on a match shows
+    const now = Date.now(), l = ev.live, out = { ok: true, id: ev.id, lg: ev.lgName, h: ev.h, a: ev.a, t: ev.t, api: !!AF_KEY,
+      sc: ev.status === 'done' ? [ev.gh, ev.ga] : l && now >= ev.t ? [l.gh, l.ga] : null, fin: ev.status === 'done', ck: clockOf(ev, now), h2h: null, stats: null };
+    if (!AF_KEY) return out;
+    try {
+      if (!(await afFindId(ev))) return out;
+      const key = ev.afH + '-' + ev.afA; let h = h2hCache.get(key);
+      if (!h || now - h.at > 12 * 3600000) {
+        const list = await afGet('/fixtures/headtohead?h2h=' + key + '&last=8');
+        h = { at: now, rows: list.filter(f => f.fixture.id !== ev.afId && f.goals && Number.isInteger(f.goals.home) && Number.isInteger(f.goals.away))
+          .map(f => ({ d: f.fixture.date, lg: f.league && f.league.name, h: f.teams.home.name, a: f.teams.away.name, hid: f.teams.home.id, gh: f.goals.home, ga: f.goals.away })).slice(0, 8) }; h2hCache.set(key, h);
+      }
+      let hw = 0, aw = 0, dr = 0;
+      h.rows.forEach(r => { const mine = r.hid === ev.afH ? r.gh - r.ga : r.ga - r.gh; if (mine > 0) hw++; else if (mine < 0) aw++; else dr++; });
+      out.h2h = { rows: h.rows.map(r => ({ d: r.d, lg: r.lg, h: r.h, a: r.a, gh: r.gh, ga: r.ga })), sum: [hw, dr, aw] };
+      if (now >= ev.t) {
+        let st = statCache.get(ev.afId);
+        if (!st || now - st.at > 30000) {
+          const res = await afGet('/fixtures/statistics?fixture=' + ev.afId), hs = res.find(x => x.team && x.team.id === ev.afH) || res[0], as = res.find(x => x.team && x.team.id === ev.afA) || res[1];
+          const val = (t, k) => { const r = t && (t.statistics || []).find(x => x.type === k); return r ? (r.value === null ? 0 : r.value) : null; };
+          st = { at: now, rows: hs && as ? STAT_ROWS.map(([k, label]) => ({ k: label, h: val(hs, k), a: val(as, k) })).filter(r => r.h !== null || r.a !== null) : [] }; statCache.set(ev.afId, st);
+        }
+        out.stats = st.rows;
+      }
+    } catch (x) { out.error = 'Data is not available right now.'; afInfo.error = String(x.message || x).slice(0, 120); }
+    return out;
+  }
+
   let scoring = false;
   // Live scores + final scores. Only leagues that have a game in play (or just finished) are asked, so nothing is spent on quiet leagues.
   //   plain call = 1 credit (live + coming games) · with daysFrom = 2 credits (also finished games, used once a game could be over)
@@ -481,7 +657,7 @@ module.exports = function createFootball(opts) {
             const gh = g(ev.h), ga = g(ev.a);
             if (!Number.isInteger(gh) || !Number.isInteger(ga)) continue;
             if (r.completed) { ev.gh = gh; ev.ga = ga; ev.status = 'done'; ev.live = null; touch(); }
-            else if (now >= ev.t) { ev.live = { gh, ga, at: now }; touch(); }                 // score of a game that is being played right now
+            else if (now >= ev.t && !(ev.live && ev.live.src === 'af' && now - ev.live.at < 2.5 * AF_LIVE_MS)) setLive(ev, gh, ga, null, null, 'odds');     // score of a game being played now
           }
         } catch (x) { real.lastError = String(x.message || x).slice(0, 120); }
       }
@@ -495,9 +671,10 @@ module.exports = function createFootball(opts) {
     setTimeout(refreshReal, 3000).unref();
     setInterval(() => { if (Date.now() - real.lastFetch >= REFRESH_MS) refreshReal(); }, 60000).unref();
     setInterval(refreshExtras, 20 * 60000).unref();                                  // matches that come within range later get their extra markets too
-    setInterval(pollScores, LIVE_MS).unref();
-    setTimeout(pollScores, 15000).unref();
+    setInterval(() => { pollScores(); refreshLiveOdds(); }, LIVE_MS).unref();
+    setTimeout(() => { pollScores(); refreshLiveOdds(); }, 15000).unref();
   }
+  if (AF_KEY) { setInterval(afLive, AF_LIVE_MS).unref(); setTimeout(afLive, 8000).unref(); }
 
   // ── booking codes (defined first: a code is also made for every real bet you place) ──
   const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789', CODE_KEEP_MS = 14 * 86400000, MAX_CODES = 5000;
@@ -518,17 +695,18 @@ module.exports = function createFootball(opts) {
   function placeReal(acc, body) {
     const s = store.settings;
     if (!ODDS_KEY) return { status: 400, error: 'real_off' };
-    if (!s.enabled) return { status: 400, error: 'game_off' };
+    if (!s.enabled || !s.real) return { status: 400, error: 'game_off' };
     const amount = Math.floor(Number(body.amount));
     if (!Number.isFinite(amount) || amount < 1 || amount > MAX_STAKE) return { status: 400, error: 'bad_amount' };
     if (amount < s.minBet) return { status: 400, error: 'below_min' };
     if (s.maxBet && amount > s.maxBet) return { status: 400, error: 'above_max' };
     const raw = Array.isArray(body.picks) ? body.picks : [], seen = new Set(), picks = [];
     for (const p of raw) {
-      const ev = real.events[p && p.e], k = p && p.k ? String(p.k) : 'x', i = Number(p && p.i);
-      if (!ev || ev.status !== 'open' || seen.has(ev.id) || !ev.o[k] || !Number.isInteger(i) || i < 0 || i >= ev.o[k].length) return { status: 400, error: 'bad_picks' };
-      if (Date.now() > ev.t - CLOSE_MS) return { status: 400, error: 'closed' };
-      seen.add(ev.id); picks.push({ e: ev.id, k, i, odd: ev.o[k][i], h: ev.h, a: ev.a, t: ev.t });   // the SERVER's odds, frozen now
+      const ev = real.events[p && p.e], k = p && p.k ? String(p.k) : 'x', i = Number(p && p.i), od = ev && ev.status === 'open' ? oddsFor(ev) : {};
+      if (!ev || ev.status !== 'open' || seen.has(ev.id)) return { status: 400, error: 'bad_picks' };
+      const cb = canBet(ev); if (!cb.ok) return { status: 400, error: cb.why };                     // started games: only when live betting is on and the prices are fresh
+      if (!od[k] || !Number.isInteger(i) || i < 0 || i >= od[k].length || od[k][i] == null) return { status: 400, error: 'bad_picks' };
+      seen.add(ev.id); picks.push({ e: ev.id, k, i, odd: od[k][i], h: ev.h, a: ev.a, t: ev.t });   // the SERVER's odds, frozen now
     }
     if (!picks.length || picks.length > MAX_PICKS) return { status: 400, error: 'bad_picks' };
     if (real.bets.filter(b => b.number === acc.number && b.status === 'open').length >= MAX_REAL_OPEN) return { status: 400, error: 'too_many' };
@@ -551,7 +729,7 @@ module.exports = function createFootball(opts) {
   function editReal(acc, body) {
     const s = store.settings;
     if (!ODDS_KEY) return { status: 400, error: 'real_off' };
-    if (!s.enabled) return { status: 400, error: 'game_off' };
+    if (!s.enabled || !s.real) return { status: 400, error: 'game_off' };
     const b = real.bets.find(x => x.id === String(body.id) && x.number === acc.number);
     if (!b) return { status: 404, error: 'no_ticket' };
     if (b.status !== 'open') return { status: 400, error: 'not_editable' };
@@ -562,9 +740,10 @@ module.exports = function createFootball(opts) {
       if (seen.has(id)) return { status: 400, error: 'bad_picks' };
       if (o && o.k === k && o.i === i) { seen.add(id); picks.push(o); continue; }                    // unchanged leg keeps its old odds
       if (o && realLocked(ev, o.t)) return { status: 400, error: 'locked_leg' };                      // a started game cannot be changed
-      if (!ev || ev.status !== 'open' || !ev.o[k] || !Number.isInteger(i) || i < 0 || i >= ev.o[k].length) return { status: 400, error: 'bad_picks' };
-      if (realLocked(ev, ev.t)) return { status: 400, error: 'closed' };
-      seen.add(id); picks.push({ e: ev.id, k, i, odd: ev.o[k][i], h: ev.h, a: ev.a, t: ev.t });
+      if (!ev || ev.status !== 'open') return { status: 400, error: 'bad_picks' };
+      const cb = canBet(ev); if (!cb.ok) return { status: 400, error: cb.why };
+      const od = oddsFor(ev); if (!od[k] || !Number.isInteger(i) || i < 0 || i >= od[k].length || od[k][i] == null) return { status: 400, error: 'bad_picks' };
+      seen.add(id); picks.push({ e: ev.id, k, i, odd: od[k][i], h: ev.h, a: ev.a, t: ev.t });
     }
     for (const [id, o] of orig) if (!seen.has(id) && realLocked(real.events[id], o.t)) return { status: 400, error: 'locked_leg' };   // a started game cannot be dropped
     if (!picks.length || picks.length > MAX_PICKS) return { status: 400, error: 'bad_picks' };
@@ -608,7 +787,8 @@ module.exports = function createFootball(opts) {
       else if (now >= ev.t) { st = now > ev.t + MIN_END_MS ? 'ended' : 'live'; if (ev.live) score = ev.live.gh + '-' + ev.live.ga; }
       else if (now > ev.t - CLOSE_MS) st = 'closed';
       else st = 'open';
-      if (ev && ev.o && ev.o[p.k]) odd = ev.o[p.k][p.i];
+      if (ev && ev.o) { const od = oddsFor(ev); if (od[p.k]) odd = od[p.k][p.i]; }
+      if (ev && ev.status === 'open' && now >= ev.t && canBet(ev).ok && odd != null) st = 'open';                 // live game that can be bet on right now
       if (st === 'open' && odd == null) st = 'nomarket';
       return { e: p.e, k: p.k, i: p.i, h: p.h, a: p.a, t: p.t, lg: p.lg, st, odd, score };
     }) };
@@ -617,11 +797,11 @@ module.exports = function createFootball(opts) {
     const now = Date.now(), w = acc ? walletOf(acc) : null, s = store.settings;
     const day0 = new Date(now); day0.setHours(0, 0, 0, 0);                    // server midnight: today's finished games stay on the list
     const evs = Object.values(real.events).filter(ev => (ev.status === 'open' && ev.t > now - 4 * 3600000) || (ev.status === 'done' && ev.t > Math.min(now - 6 * 3600000, day0.getTime()))).sort((a, b) => a.t - b.t).slice(0, 250)
-      .map(ev => ({ id: ev.id, lg: ev.lgName, h: ev.h, a: ev.a, t: ev.t, o: ev.o, closed: ev.status !== 'open' || now > ev.t - CLOSE_MS,
-        sc: ev.status === 'done' ? [ev.gh, ev.ga] : ev.live && now >= ev.t ? [ev.live.gh, ev.live.ga] : null, fin: ev.status === 'done' }));
+      .map(ev => ({ id: ev.id, lg: ev.lgName, h: ev.h, a: ev.a, t: ev.t, o: oddsFor(ev), closed: !canBet(ev, now).ok, why: canBet(ev, now).why || '',
+        sc: ev.status === 'done' ? [ev.gh, ev.ga] : ev.live && now >= ev.t ? [ev.live.gh, ev.live.ga] : null, fin: ev.status === 'done', ck: ev.status === 'done' ? { ph: 'FT', min: 90, plus: 0, left: 0, est: false } : clockOf(ev, now) }));
     const mine = acc ? real.bets.filter(b => b.number === acc.number).slice(-30).reverse()
       .map(b => ({ id: b.id, at: b.at, picks: b.picks.map((p, ix) => Object.assign({ e: p.e, k: p.k, i: p.i, odd: p.odd, h: p.h, a: p.a, t: p.t }, b.res ? b.res[ix] : legRes(p))), amount: b.amount, odds: b.odds, status: b.status, win: b.win, code: b.code || null, edits: b.edits || 0 })) : [];
-    return { ok: true, now, on: !!ODDS_KEY && s.enabled, setup: !ODDS_KEY, limits: { min: s.minBet, max: s.maxBet }, events: evs, mine, balance: w ? w.have : null, updated: real.lastFetch, error: real.lastError || '', days: DAYS, diag: Object.entries(real.diag || {}).map(([k, v]) => ({ lg: LEAGUE_NAME[k] || TITLES[k] || k, n: v.n, err: v.err })) };
+    return { ok: true, now, on: !!ODDS_KEY && s.enabled && s.real, locked: !s.enabled || !s.real, liveOn: s.live, mode: s.mode, setup: !ODDS_KEY, limits: { min: s.minBet, max: s.maxBet }, events: evs, mine, balance: w ? w.have : null, updated: real.lastFetch, error: real.lastError || '', days: DAYS, diag: Object.entries(real.diag || {}).map(([k, v]) => ({ lg: LEAGUE_NAME[k] || TITLES[k] || k, n: v.n, err: v.err })) };
   }
 
   // ── what the browser sees ───────────────────────────────────
@@ -630,7 +810,7 @@ module.exports = function createFootball(opts) {
   const csNames = CS.map(c => c.join('-')).concat('Other');
   function ticket(b, r) {
     const done = r.settled, st = r === nxt ? 'open' : done ? (b.win ? 'won' : 'lost') : 'live';
-    return { id: b.id, round: r.id, kick: r.kick, amount: b.amount, odds: b.odds, win: done ? b.win : null, st, n: b.picks.length,
+    return { id: b.id, round: r.id, kick: r.kick, amount: b.amount, odds: b.odds, win: done ? b.win : null, st, n: b.picks.length, code: b.code || null,
       legs: b.picks.map(p => { const f = r.fx[p.m]; return Object.assign({ m: p.m, h: f.h.n, a: f.a.n, k: p.k, i: p.i, odd: p.odd },
         done ? { res: wins(f, p.k, p.i) ? 'won' : 'lost', score: f.gh + '-' + f.ga } : { res: 'pend' }); }) };
   }
@@ -638,7 +818,7 @@ module.exports = function createFootball(opts) {
     q = q || {};
     const s = store.settings, w = acc ? walletOf(acc) : null;
     const out = {
-      ok: true, now: Date.now(), enabled: s.enabled, limits: { min: s.minBet, max: s.maxBet },
+      ok: true, now: Date.now(), enabled: s.enabled && s.virtual, mode: s.mode, limits: { min: s.minBet, max: s.maxBet },
       timing: { every: EVERY, play: PLAY_MS, end: END_MS }, per: PER, leagues: LG.map(l => l[0]), cs: csNames,
       curId: cur.id, curKick: cur.kick, nextId: nxt.id, nextKick: nxt.kick, settledId,
       mine: acc ? [...cur.bets, ...nxt.bets].filter(b => b.number === acc.number).map(b => ticket(b, cur.bets.includes(b) ? cur : nxt)) : [],
@@ -650,12 +830,50 @@ module.exports = function createFootball(opts) {
     return out;
   }
 
+  // ── club logos: looked up once per club on TheSportsDB (free, key 123) and kept in the data file. The page shows the logo, or the coloured crest until one is found.
+  //    LOGOS=off switches it off · THESPORTSDB_KEY=your key (optional)
+  const LOGO_ON = !/^(off|0|none|no)$/i.test(String(process.env.LOGOS || 'on')), SDB_KEY = String(process.env.THESPORTSDB_KEY || '123').trim();
+  const ALIAS = { 'Man City': 'Manchester City', 'Man United': 'Manchester United', 'Nottm Forest': 'Nottingham Forest', 'Sheffield Utd': 'Sheffield United', 'Atletico': 'Atletico Madrid', 'Athletic': 'Athletic Bilbao',
+    'Betis': 'Real Betis', 'Celta': 'Celta Vigo', 'Rayo': 'Rayo Vallecano', 'Alaves': 'Alaves', 'Gladbach': 'Borussia Monchengladbach', 'Dortmund': 'Borussia Dortmund', 'Leipzig': 'RB Leipzig', 'Leverkusen': 'Bayer Leverkusen',
+    'Frankfurt': 'Eintracht Frankfurt', 'Bayern': 'Bayern Munich', 'Koln': 'FC Koln', 'Mainz': 'Mainz 05', 'Hoffenheim': 'TSG Hoffenheim', 'Dusseldorf': 'Fortuna Dusseldorf', 'Hertha': 'Hertha Berlin', 'Hannover': 'Hannover 96',
+    'Nurnberg': 'Nurnberg', 'Munster': 'Preussen Munster', 'Osnabruck': 'VfL Osnabruck', 'Cottbus': 'Energie Cottbus', 'Dresden': 'Dynamo Dresden', 'Rostock': 'Hansa Rostock', 'Regensburg': 'Jahn Regensburg', 'Karlsruhe': 'Karlsruher SC',
+    'Paderborn': 'Paderborn', 'Magdeburg': 'Magdeburg', 'Darmstadt': 'Darmstadt 98', 'Braunschweig': 'Eintracht Braunschweig', 'Elversberg': 'Elversberg', 'Ulm': 'SSV Ulm', 'Holstein Kiel': 'Holstein Kiel', 'Greuther Furth': 'Greuther Furth',
+    'Inter': 'Inter Milan', 'Roma': 'AS Roma', 'PSG': 'Paris SG', 'Monaco': 'AS Monaco', 'Sporting': 'Sporting CP', 'PSV': 'PSV Eindhoven', 'Salzburg': 'Red Bull Salzburg', 'Shakhtar': 'Shakhtar Donetsk', 'Basel': 'FC Basel',
+    'Copenhagen': 'FC Copenhagen', 'Red Star': 'Red Star Belgrade', 'Racing': 'Racing Santander', 'Valladolid': 'Real Valladolid', 'Sporting Gijon': 'Sporting Gijon', 'Preston': 'Preston North End', 'Derby': 'Derby County',
+    'Cardiff': 'Cardiff City', 'Swansea': 'Swansea City', 'Hull': 'Hull City', 'Stoke': 'Stoke City', 'Leicester': 'Leicester City', 'Norwich': 'Norwich City', 'Coventry': 'Coventry City', 'Bristol City': 'Bristol City', 'Luton': 'Luton Town',
+    'Ipswich': 'Ipswich Town', 'Tottenham': 'Tottenham Hotspur', 'West Ham': 'West Ham United', 'Wolves': 'Wolverhampton Wanderers', 'Newcastle': 'Newcastle United', 'Leeds': 'Leeds United', 'Brighton': 'Brighton & Hove Albion', 'Brentford': 'Brentford' };
+  const strictToks = (n) => toks(n).filter(x => x !== 'and');
+  function pickBadge(term, teams) {
+    const q = strictToks(term), qs = q.join(' '), ok = (teams || []).filter(t => /soccer|football/i.test(t.strSport || 'Soccer'));
+    const names = (t) => [t.strTeam, ...String(t.strAlternate || '').split(',')].filter(Boolean);
+    const exact = ok.find(t => names(t).some(n => strictToks(n).join(' ') === qs));
+    const part = ok.find(t => { const r = strictToks(t.strTeam); return !r.some(x => ['women', 'ladies', 'u17', 'u18', 'u19', 'u20', 'u21', 'u23', 'ii', 'b'].includes(x)) && q.every(x => r.includes(x)); });
+    const t = exact || part; return t ? (t.strBadge || t.strTeamBadge || '') : '';
+  }
+  let logoBusy = false, logoPause = 0;
+  async function logoStep() {
+    if (!LOGO_ON || logoBusy || Date.now() < logoPause) return; logoBusy = true;
+    try {
+      const names = [...new Set([...Object.values(real.events).filter(e => e.status === 'open').flatMap(e => [e.h, e.a]), ...LG.flatMap(([, ts]) => ts.map(t => t.n))])];
+      const name = names.find(n => !store.logos[n] && !(store.logoMiss[n] && Date.now() - store.logoMiss[n] < 7 * 86400000)); if (!name) return;
+      const term = ALIAS[name] || name;
+      const r = await fetch('https://www.thesportsdb.com/api/v1/json/' + encodeURIComponent(SDB_KEY) + '/searchteams.php?t=' + encodeURIComponent(term), { signal: AbortSignal.timeout(15000) });
+      if (r.status === 429) { logoPause = Date.now() + 65000; return; }
+      if (!r.ok) throw new Error('logo api ' + r.status);
+      const j = await r.json().catch(() => ({})), url = pickBadge(term, j && j.teams);
+      if (url) store.logos[name] = url.replace(/^http:/, 'https:') + '/small'; else store.logoMiss[name] = Date.now();
+      touch();
+    } catch (x) { logoPause = Date.now() + 30000; }
+    finally { logoBusy = false; }
+  }
+  if (LOGO_ON) setInterval(logoStep, 2600).unref();
+
   // ── admin helpers (optional) ────────────────────────────────
   function setSettings(patch) {
     const clean = cleanSettings(Object.assign({}, store.settings, patch || {}));
     store.settings = clean; touch(); return { settings: clean };
   }
-  const adminInfo = () => ({ settings: store.settings, round: { next: nxt.id, nextBets: nxt.bets.length, live: cur.id, liveBets: cur.bets.length }, real: { on: !!ODDS_KEY, events: Object.keys(real.events).length, openBets: real.bets.filter(b => b.status === 'open').length, lastFetch: real.lastFetch, lastError: real.lastError, credits: real.credits, extraMarkets: EXTRA_MKTS, leagues: AUTO ? 'auto' : LEAGUES, stats: real.stats }, stats: Object.assign({ houseNet: store.stats.staked - store.stats.paid }, store.stats) });
+  const adminInfo = () => ({ modes: Object.fromEntries(Object.entries(MODES).map(([k, v]) => [k, { label: v.label, virtual: v.v, real: v.r }])), settings: store.settings, apiFootball: { on: !!AF_KEY, left: afInfo.left, error: afInfo.error }, round: { next: nxt.id, nextBets: nxt.bets.length, live: cur.id, liveBets: cur.bets.length }, real: { on: !!ODDS_KEY, events: Object.keys(real.events).length, openBets: real.bets.filter(b => b.status === 'open').length, lastFetch: real.lastFetch, lastError: real.lastError, credits: real.credits, extraMarkets: EXTRA_MKTS, leagues: AUTO ? 'auto' : LEAGUES, stats: real.stats }, stats: Object.assign({ houseNet: store.stats.staked - store.stats.paid }, store.stats) });
 
   // ── http entry point (server.js sends everything under /football/ here) ──
   async function handle(req, res, p) {
@@ -667,6 +885,28 @@ module.exports = function createFootball(opts) {
     if (p === '/football/real/state' && req.method === 'GET') {
       if (hit('fbr', clientIp(req), 1200, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
       return send(res, 200, realView(acc));
+    }
+    const im = p.match(/^\/football\/real\/info\/([A-Za-z0-9]{4,64})$/);
+    if (im && req.method === 'GET') {
+      if (hit('fbi', clientIp(req), 90, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
+      const ev = real.events[im[1]]; if (!ev) return send(res, 404, { ok: false, error: 'no_match' });
+      return send(res, 200, await infoView(ev));
+    }
+    const vm = p.match(/^\/football\/code\/([A-Za-z0-9]{4,12})$/);
+    if (vm && req.method === 'GET') {
+      if (hit('fbk', clientIp(req), 60, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
+      const v = vCodeView(vm[1]); return v ? send(res, 200, v) : send(res, 404, { ok: false, error: 'no_code' });
+    }
+    if (p === '/football/code' && req.method === 'POST') {
+      if (req.headers['x-requested-with'] !== 'XMLHttpRequest') return send(res, 403, { ok: false, error: 'bad_request' });
+      if (!acc) return send(res, 401, { ok: false, error: 'not_logged_in' });
+      if (hit('fbk', acc.number, 30, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
+      const r = makeVCode(acc, await readBody(req));
+      return r.status === 200 ? send(res, 200, { ok: true, code: r.code }) : send(res, r.status, { ok: false, error: r.error });
+    }
+    if (p === '/football/logos' && req.method === 'GET') {
+      if (hit('fbl', clientIp(req), 120, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
+      return send(res, 200, { ok: true, logos: Object.fromEntries(Object.entries(store.logos).filter(([, u]) => u)) });
     }
     const cm = p.match(/^\/football\/real\/code\/([A-Za-z0-9]{4,12})$/);
     if (cm && req.method === 'GET') {
