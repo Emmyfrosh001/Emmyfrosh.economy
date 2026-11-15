@@ -69,10 +69,21 @@
               </table>
             </div>
             <p class="empty" id="userEmpty" hidden>No players found.</p>
+            <p class="hint">On each player: <b>Freeze</b> = locked out of the website until they message customer care. <b>Ban</b> = off the leaderboard, no login, and that number can never make a new account. <b>Remove</b> = deleted completely and off the leaderboard: a fresh start, as if the player never existed (they may sign up again later).</p>
             <div class="row pager">
               <button id="prev" class="btn ghost">Previous</button>
               <span id="pageInfo"></span>
               <button id="next" class="btn ghost">Next</button>
+            </div>
+            <div id="removedBox" hidden>
+              <h3>Removed players</h3>
+              <p class="hint">Hidden from the leaderboard until the bot confirms the fresh start. “Restore” brings them back.</p>
+              <div class="table-scroll">
+                <table class="board">
+                  <thead><tr><th>Player</th><th>Number</th><th>Removed</th><th>Bot reset</th><th></th></tr></thead>
+                  <tbody id="removedRows"></tbody>
+                </table>
+              </div>
             </div>
           </div>
 
