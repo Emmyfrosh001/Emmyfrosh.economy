@@ -1007,7 +1007,10 @@ module.exports = function createFootball(opts) {
       try { const a = await espnRaw(lg, Date.now() - 86400000, Date.now() + DAYS * 86400000); out.range = { status: a.status, count: a.events.length, first: a.events.slice(0, 6).map(brief) }; } catch (x) { out.range = { error: String(x.message || x) }; }
       try { const b = await espnRaw(lg); out.plain = { status: b.status, count: b.events.length, first: b.events.slice(0, 6).map(brief) }; } catch (x) { out.plain = { error: String(x.message || x) }; }
       out.listed = Object.values(real.events).filter(e => e.lg === lg).length;
-      return send(res, 200, out);
+      const part = (t, x) => [t + ': ' + (x.error ? 'ERROR ' + x.error : 'HTTP ' + x.status + ' · ' + x.count + ' games')].concat((x.first || []).map(e => '   - ' + [e.name || e.id, e.date, e.state].join(' | '))).join('\n');
+      const txt = ['League code: ' + lg, 'Source: ' + out.source, 'Server time: ' + out.now, '', part('Next 7 days', out.range), '', part('ESPN current / next matchday', out.plain), '', 'Games from this league in our list: ' + out.listed].join('\n');
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end('<meta name=viewport content="width=device-width,initial-scale=1"><body style="background:#000;color:#eee;font:16px/1.5 monospace;padding:16px"><pre style="white-space:pre-wrap;word-break:break-word">' + txt.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</pre>');
     }
     const im = p.match(/^\/football\/real\/info\/([A-Za-z0-9]{4,64})$/);
     if (im && req.method === 'GET') {
