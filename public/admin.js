@@ -145,12 +145,35 @@ async function loadUsers() {
       const tr = el('tr', selected && selected.id === u.id ? 'sel' : '');
       const nameCell = td(u.name, 'name');
       if (u.pending) nameCell.append(el('span', 'badge', 'edit pending'));
-      const btn = el('button', 'btn small', 'Edit');
-      btn.type = 'button';
-      btn.addEventListener('click', () => pickUser(u));
-      const act = el('td'); act.append(btn);
+      if (u.banned) nameCell.append(el('span', 'badge closed', 'banned'));
+      if (u.frozen) nameCell.append(el('span', 'badge', 'frozen'));
+      const act = el('td', 'acts');
+      const mk = (label, cls, fn) => { const b = el('button', 'btn small ' + (cls || ''), label); b.type = 'button'; b.addEventListener('click', fn); act.append(b); };
+      mk('Edit', '', () => pickUser(u));
+      mk(u.frozen ? 'Unfreeze' : 'Freeze', '', async () => {
+        if (!confirm(u.frozen ? `Unfreeze ${u.name}? They can log in again.` : `Freeze ${u.name}? They are logged out and cannot log in. They must message customer care to be unfrozen.`)) return;
+        try { await api('/admin/api/players/freeze', 'POST', { id: u.id, frozen: !u.frozen }); toast(u.frozen ? 'Unfrozen.' : 'Frozen.'); loadUsers(); loadActivity(); } catch (e) { say(e); }
+      });
+      mk(u.banned ? 'Unban' : 'Ban', u.banned ? '' : 'warn', async () => {
+        if (!confirm(u.banned ? `Unban ${u.name} (${u.number})? They can log in, sign up and appear on the leaderboard again.` : `Ban ${u.name} (${u.number})?\n\n• removed from the leaderboard\n• logged out and cannot log in\n• this number can never create an account`)) return;
+        try { await api('/admin/api/players/ban', 'POST', { id: u.id, banned: !u.banned }); toast(u.banned ? 'Unbanned.' : 'Banned and hidden from the leaderboard.'); loadUsers(); loadOverview(); loadActivity(); } catch (e) { say(e); }
+      });
+      mk('Remove', 'danger', async () => {
+        if (!confirm(`REMOVE ${u.name} (${u.number})?\n\n• website account deleted right now\n• gone from the leaderboard\n• a fresh start: as if this player never existed\n\nThis cannot be undone.`)) return;
+        try { await api('/admin/api/players/remove', 'POST', { id: u.id }); toast(`${u.name} removed. The bot wipes the rest within about 30 seconds.`); if (selected && selected.id === u.id) { selected = null; $('applyBtn').disabled = true; $('editTarget').textContent = 'Pick a player from the list.'; } loadUsers(); loadOverview(); loadActivity(); } catch (e) { say(e); }
+      });
       tr.append(nameCell, td('$' + fmt(u.balance), 'n'), td('$' + fmt(u.bank), 'n'), td(fmt(u.gams), 'n'), td(String(u.level), 'n'), act);
       body.append(tr);
+    });
+    const rb = $('removedRows'); rb.replaceChildren();
+    $('removedBox').hidden = !(j.removed && j.removed.length);
+    (j.removed || []).forEach(r => {
+      const tr = el('tr'), a = el('td', 'acts');
+      const b = el('button', 'btn small', 'Restore'); b.type = 'button';
+      b.addEventListener('click', async () => { try { await api('/admin/api/players/restore', 'POST', { id: r.id }); toast('Restored. They show again at the next bot update.'); loadUsers(); } catch (e) { say(e); } });
+      a.append(b);
+      const st = { waiting: 'Waiting for the bot…', done: 'Done', failed: 'Failed' + (r.error ? ' (' + r.error + ')' : ''), unknown: '—' }[r.state];
+      tr.append(td(r.name, 'name'), td(r.number), td(when(r.at)), td(st), a); rb.append(tr);
     });
     $('pageInfo').textContent = `Page ${page} of ${pages} · ${fmt(j.count)} players`;
     $('prev').disabled = page <= 1;
@@ -360,25 +383,30 @@ async function loadAccounts() {
     const j = await api('/admin/api/accounts?q=' + encodeURIComponent(accQuery));
     const body = $('accRows'); body.replaceChildren();
     $('accEmpty').hidden = j.items.length > 0;
-    $('accNote').textContent = `${fmt(j.total)} account(s), ${fmt(j.banned)} banned, ${fmt(j.waiting)} sign-up(s) waiting for WhatsApp confirmation. Changes are applied by the bot within about 10 seconds.`;
+    $('accNote').textContent = `${fmt(j.total)} account(s), ${fmt(j.banned)} banned, ${fmt(j.frozen)} frozen, ${fmt(j.waiting)} sign-up(s) waiting for WhatsApp confirmation. Changes are applied by the bot within about 10 seconds.`;
     j.items.forEach(a => {
       const tr = el('tr', a.banned ? 'used' : '');
       const st = el('td');
-      st.append(document.createTextNode(a.banned ? 'Banned' : 'Active'));
-      if (a.banned) st.append(el('span', 'badge closed', 'no login'));
+      st.append(document.createTextNode(a.banned ? 'Banned' : a.frozen ? 'Frozen' : 'Active'));
+      if (a.banned) st.append(el('span', 'badge closed', a.noAccount ? 'number blocked' : 'no login'));
+      if (a.frozen) st.append(el('span', 'badge', 'ask customer care'));
       if (a.pending) st.append(el('span', 'badge', 'change pending'));
       const acts = el('td', 'acts');
       const mk = (label, cls, fn) => { const b = el('button', 'btn small ' + (cls || ''), label); b.type = 'button'; b.addEventListener('click', fn); acts.append(b); };
-      mk('Change password', '', async () => {
+      if (!a.noAccount) mk('Change password', '', async () => {
         const pw = prompt(`New password for ${a.name} (${a.number}). 6–40 characters, no spaces.`, '');
         if (!pw) return;
         try { await api('/admin/api/accounts/password', 'POST', { number: a.number, password: pw }); toast('Password changed. Tell the player the new one.'); loadAccounts(); } catch (e) { say(e); }
       });
+      if (!a.noAccount && !a.banned) mk(a.frozen ? 'Unfreeze' : 'Freeze', '', async () => {
+        if (!confirm(a.frozen ? `Unfreeze ${a.name} (${a.number})?` : `Freeze ${a.name} (${a.number})? They are logged out and must message customer care.`)) return;
+        try { await api('/admin/api/accounts/freeze', 'POST', { number: a.number, frozen: !a.frozen }); toast(a.frozen ? 'Unfrozen.' : 'Frozen.'); loadAccounts(); } catch (e) { say(e); }
+      });
       mk(a.banned ? 'Unban' : 'Ban', a.banned ? '' : 'warn', async () => {
-        if (!confirm(`${a.banned ? 'Unban' : 'Ban'} ${a.name} (${a.number})?` + (a.banned ? '' : ' They will be logged out and cannot buy on the website.'))) return;
+        if (!confirm(`${a.banned ? 'Unban' : 'Ban'} ${a.name} (${a.number})?` + (a.banned ? '' : ' They will be logged out, hidden from the leaderboard, and this number can never make a new account.'))) return;
         try { await api('/admin/api/accounts/ban', 'POST', { number: a.number, banned: !a.banned }); toast(a.banned ? 'Unbanned.' : 'Banned.'); loadAccounts(); } catch (e) { say(e); }
       });
-      mk('Delete login', 'danger', async () => {
+      if (!a.noAccount) mk('Delete login', 'danger', async () => {
         if (!confirm(`Delete the website login for ${a.name} (${a.number})? Their game money and items are not touched. They can create a new account.`)) return;
         try { await api('/admin/api/accounts/delete', 'POST', { number: a.number }); toast('Login deleted.'); loadAccounts(); } catch (e) { say(e); }
       });
