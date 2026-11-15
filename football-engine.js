@@ -321,7 +321,11 @@ module.exports = function createFootball(opts) {
 
   // ═══════════════ REAL football (real fixtures, real odds, real results) ═══════════════
   // Data: The Odds API (https://the-odds-api.com). Needs env ODDS_API_KEY. Without it this part stays switched off.
-  const ODDS_KEY = String(process.env.ODDS_API_KEY || '').trim();
+  // REAL_SOURCE = "free" (default): every match comes from ESPN's free public scoreboard (no key, no credit limit) and the server CALCULATES the odds.
+  //               "odds": the old way, real bookmaker odds from The Odds API (needs a valid ODDS_API_KEY, 500 free credits a month).
+  const FREE = String(process.env.REAL_SOURCE || 'free').trim().toLowerCase() !== 'odds';
+  const ODDS_KEY = FREE ? '' : String(process.env.ODDS_API_KEY || '').trim();
+  const REAL_ON = FREE || !!ODDS_KEY;
   // REAL_LEAGUES = "auto" (default): every soccer league that is in season right now (free lookup), the big ones first, at most REAL_AUTO_MAX of them.
   // Or give a fixed list, e.g. REAL_LEAGUES=soccer_epl,soccer_spain_la_liga
   const LEAGUES_RAW = String(process.env.REAL_LEAGUES || 'auto').trim();
@@ -525,6 +529,7 @@ module.exports = function createFootball(opts) {
     if (!ev || ev.status !== 'open') return { ok: false, why: 'closed' };
     if (now <= ev.t - CLOSE_MS) return { ok: true };
     if (now < ev.t) return { ok: false, why: 'closed' };                                      // the last minute before kick-off
+    if (ev.free) return { ok: false, why: 'closed' };                                         // calculated odds never move, so no betting once the game has started
     if (!store.settings.live) return { ok: false, why: 'live_off' };
     const l = ev.live, c = clockOf(ev, now);
     if (c && (c.ph === 'FT' || c.ph === 'ET' || (c.ph === '2H' && c.min >= 85))) return { ok: false, why: 'closed' };
@@ -667,6 +672,110 @@ module.exports = function createFootball(opts) {
       if (real.bets.length > 3000 || real.bets.some(b => b.status !== 'open' && b.done < cut)) { real.bets = real.bets.filter(b => b.status === 'open' || b.done >= cut).slice(-3000); touch(); }
     } finally { scoring = false; }
   }
+  // ═══════ FREE feed (default): every match, live score and final result from ESPN's public scoreboard. No key, no credit limit. ═══════
+  // No free feed carries bookmaker prices, so the SERVER works the odds out from team strength with the same model as the TV matches
+  // (known clubs use their rating, others use their league record). Odds are made once per match and then stay fixed. Betting closes at kick-off.
+  // FREE_LEAGUES=eng.1,esp.1,... picks leagues · FREE_REFRESH_MIN (30) how often the fixture list is refreshed · FREE_LIVE_SEC (60) live score check
+  const ESPN = 'https://site.api.espn.com/apis/site/v2/sports/soccer/';
+  const ESPN_LG = { 'eng.1': 'Premier League', 'uefa.champions': 'Champions League', 'esp.1': 'La Liga', 'ita.1': 'Serie A', 'ger.1': 'Bundesliga', 'fra.1': 'Ligue 1',
+    'uefa.europa': 'Europa League', 'uefa.europa.conf': 'Conference League', 'eng.2': 'Championship', 'eng.3': 'League One', 'eng.fa': 'FA Cup', 'eng.league_cup': 'League Cup',
+    'ned.1': 'Eredivisie', 'por.1': 'Primeira Liga', 'sco.1': 'Scottish Premiership', 'bel.1': 'Belgian Pro League', 'tur.1': 'Super Lig', 'gre.1': 'Greek Super League',
+    'esp.2': 'La Liga 2', 'ita.2': 'Serie B', 'ger.2': '2. Bundesliga', 'fra.2': 'Ligue 2', 'esp.copa_del_rey': 'Copa del Rey', 'ita.coppa_italia': 'Coppa Italia', 'ger.dfb_pokal': 'DFB Pokal',
+    'uefa.nations': 'UEFA Nations League', 'fifa.friendly': 'International Friendly', 'fifa.world': 'World Cup', 'fifa.worldq.uefa': 'World Cup Qualifiers (Europe)',
+    'fifa.worldq.caf': 'World Cup Qualifiers (Africa)', 'fifa.worldq.conmebol': 'World Cup Qualifiers (S. America)', 'uefa.euroq': 'Euro Qualifiers', 'caf.nations': 'AFCON',
+    'caf.champions': 'CAF Champions League', 'arg.1': 'Primera Division - Argentina', 'bra.1': 'Brasileirao', 'usa.1': 'MLS', 'mex.1': 'Liga MX', 'jpn.1': 'J1 League', 'aus.1': 'A-League',
+    'sau.1': 'Saudi Pro League', 'rsa.1': 'South African Premier Division' };
+  Object.assign(LEAGUE_NAME, ESPN_LG);
+  const FREE_LEAGUES = String(process.env.FREE_LEAGUES || '').split(',').map(x => x.trim()).filter(x => /^[a-z0-9_.]+$/i.test(x)), FREE_LG = FREE_LEAGUES.length ? FREE_LEAGUES : Object.keys(ESPN_LG);
+  const FREE_REFRESH = Math.max(5, Number(process.env.FREE_REFRESH_MIN) || 30) * 60000, FREE_LIVE_MS = Math.max(30, Number(process.env.FREE_LIVE_SEC) || 60) * 1000;
+  const ymd = (t) => new Date(t).toISOString().slice(0, 10).replace(/-/g, '');
+  async function espnGet(slug, from, to) {
+    const r = await fetch(ESPN + encodeURIComponent(slug) + '/scoreboard?limit=300&dates=' + ymd(from) + '-' + ymd(to), { signal: AbortSignal.timeout(20000), headers: { accept: 'application/json' } });
+    if (r.status === 404 || r.status === 400) return [];                                   // this feed has no such league: not an error
+    if (!r.ok) throw new Error('espn ' + r.status);
+    const j = await r.json().catch(() => ({}));
+    return Array.isArray(j.events) ? j.events : [];
+  }
+  // strength of a team (1.0 weak .. ~1.95 elite): the club ratings above when the name matches, else the league record (W-D-L), else average
+  const KNOWN_T = LG.flatMap(([, ts]) => ts);
+  function knownStrength(name) {
+    const nt = toks(name); if (!nt.length) return null;
+    const ns = nt.join(' '); let best = null, bp = 0;
+    for (const t of KNOWN_T) for (const c of [t.n, ALIAS[t.n]]) {
+      if (!c) continue; const ct = toks(c); if (!ct.length) continue;
+      const p = ct.join(' ') === ns ? 1e3 : ct.every(x => nt.includes(x)) && nt.length <= ct.length + 2 ? ct.length : 0;
+      if (p > bp) { bp = p; best = t; }
+    }
+    return best ? best.s : null;
+  }
+  function strengthOf(name, comp) {
+    const k = knownStrength(name); if (k) return k;
+    const rec = ((comp && comp.records) || []).map(r => /^(\d+)-(\d+)-(\d+)/.exec(String(r && r.summary || ''))).find(Boolean);
+    if (rec) {
+      const w = +rec[1], d = +rec[2], l = +rec[3], n = w + d + l;
+      if (n >= 3) { const ppg = (3 * w + d) / n, s = 0.95 + 0.33 * ppg, wt = n / (n + 6); return Math.max(1, Math.min(1.9, wt * s + (1 - wt) * 1.2)); }
+    }
+    return 1.2;
+  }
+  function freeOdds(h, a, hc, ac) {
+    const f = fixture({ s: strengthOf(h, hc) }, { s: strengthOf(a, ac) }, 0, REAL_EDGE, 0), o = {};
+    for (const [k, arr] of Object.entries(f.o)) { if (k === 'cs' || k === 'u1' || k === 'u2') continue; if (arr.some(v => v != null)) o[k] = arr; }   // the markets a real match can settle
+    return o;
+  }
+  const STATE = (nm, period) => /FIRST_HALF/.test(nm) ? '1H' : /HALFTIME|HALF_TIME/.test(nm) ? 'HT' : /SECOND_HALF/.test(nm) ? '2H' : /EXTRA|OVERTIME|SHOOTOUT|PENALT/.test(nm) ? 'ET' : period === 1 ? '1H' : period === 2 ? '2H' : null;
+  function applyFree(slug, e) {                                                             // → 1 when a new open match was seen
+    const c = e && e.competitions && e.competitions[0], cs = c && Array.isArray(c.competitors) ? c.competitors : [];
+    const H = cs.find(x => x.homeAway === 'home'), A = cs.find(x => x.homeAway === 'away'); if (!H || !A || !e.id) return 0;
+    const hn = H.team && (H.team.displayName || H.team.name), an = A.team && (A.team.displayName || A.team.name), t = Date.parse(e.date || c.date);
+    if (!hn || !an || !Number.isFinite(t)) return 0;
+    const sx = (e.status && e.status.type) || (c.status && c.status.type) || {}, nm = String(sx.name || ''), state = sx.state, id = 'e' + e.id;
+    if (H.team.logo && !store.logos[hn]) store.logos[hn] = H.team.logo; if (A.team.logo && !store.logos[an]) store.logos[an] = A.team.logo;
+    let ev = real.events[id];
+    if (/POSTPONED|CANCEL|ABANDON/i.test(nm)) { if (ev && ev.status === 'open') { ev.status = 'void'; touch(); } return 0; }
+    if (state === 'pre') {
+      if (ev) { if (ev.status === 'open' && ev.t > Date.now() && ev.t !== t) { ev.t = t; touch(); } return 0; }          // moved to another time: keep the same match
+      if (t <= Date.now()) return 0;
+      const o = freeOdds(hn, an, H, A); if (!o.x) return 0;
+      ev = real.events[id] = { id, lg: slug, lgName: ESPN_LG[slug] || slug, h: hn, a: an, t, base: o, ex: {}, exAt: 0, status: 'open', gh: null, ga: null, free: true };
+      compose(ev); touch(); return 1;
+    }
+    if (!ev || ev.status !== 'open') return 0;                                              // a game we never listed (no odds) is ignored
+    const gh = parseInt(H.score, 10), ga = parseInt(A.score, 10); if (!Number.isInteger(gh) || !Number.isInteger(ga)) return 0;
+    if (state === 'in') {
+      const st = STATE(nm, e.status && e.status.period), mn = parseInt(String((e.status && e.status.displayClock) || '').replace(/[^0-9+].*$/, ''), 10);
+      setLive(ev, gh, ga, st === 'HT' ? 45 : mn, st, 'free'); return 0;
+    }
+    if (state === 'post') {
+      if (/AET|PEN|EXTRA|SHOOT/i.test(nm)) { ev.status = 'void'; ev.live = null; touch(); return 0; }          // score includes extra time / shootout: stakes come back
+      ev.gh = gh; ev.ga = ga; ev.status = 'done'; ev.live = null; touch();
+    }
+    return 0;
+  }
+  let freeBusy = false;
+  async function pollFree(full) {                                                           // full = fixtures for every league · else only leagues with a game being played / just finished
+    if (!FREE || freeBusy) return; freeBusy = true;
+    try {
+      const now = Date.now(), diag = {}; let errs = [], fresh = 0;
+      const act = new Set(Object.values(real.events).filter(ev => ev.free && ev.status === 'open' && now >= ev.t - 5 * 60000 && now < ev.t + VOID_MS).map(ev => ev.lg));
+      const lgs = full ? FREE_LG : FREE_LG.filter(x => act.has(x)); if (!lgs.length && !full) { settleBets(); return; }
+      const from = now - 2 * 86400000, to = now + DAYS * 86400000;
+      for (let i = 0; i < lgs.length; i += 6) await Promise.all(lgs.slice(i, i + 6).map(async (lg) => {
+        try {
+          const list = await espnGet(lg, from, to); let n = 0;
+          for (const e of list) { try { fresh += applyFree(lg, e); if (e && e.status && e.status.type && e.status.type.state === 'pre') n++; } catch (x) { } }
+          if (full) diag[lg] = { n, err: '', at: now };
+        } catch (x) { const m = String(x.message || x).slice(0, 100); errs.push(m); if (full) diag[lg] = { n: 0, err: m, at: now }; }
+      }));
+      if (full) { real.diag = diag; real.lastFetch = now; real.lastError = errs.length === lgs.length && errs.length ? 'match feed: ' + errs[0] : ''; }
+      touch();
+    } finally { freeBusy = false; }
+    pollScores();                                                                           // settle tickets, void games that never finished, clean old games
+  }
+  if (FREE) {
+    setTimeout(() => pollFree(true), 3000).unref();
+    setInterval(() => { if (Date.now() - real.lastFetch >= FREE_REFRESH) pollFree(true); }, 60000).unref();
+    setInterval(() => pollFree(false), FREE_LIVE_MS).unref();
+  }
   if (ODDS_KEY) {
     setTimeout(refreshReal, 3000).unref();
     setInterval(() => { if (Date.now() - real.lastFetch >= REFRESH_MS) refreshReal(); }, 60000).unref();
@@ -694,7 +803,7 @@ module.exports = function createFootball(opts) {
 
   function placeReal(acc, body) {
     const s = store.settings;
-    if (!ODDS_KEY) return { status: 400, error: 'real_off' };
+    if (!REAL_ON) return { status: 400, error: 'real_off' };
     if (!s.enabled || !s.real) return { status: 400, error: 'game_off' };
     const amount = Math.floor(Number(body.amount));
     if (!Number.isFinite(amount) || amount < 1 || amount > MAX_STAKE) return { status: 400, error: 'bad_amount' };
@@ -728,7 +837,7 @@ module.exports = function createFootball(opts) {
   const realLocked = (ev, t) => !ev || ev.status !== 'open' || Date.now() > (ev.t || t) - CLOSE_MS;
   function editReal(acc, body) {
     const s = store.settings;
-    if (!ODDS_KEY) return { status: 400, error: 'real_off' };
+    if (!REAL_ON) return { status: 400, error: 'real_off' };
     if (!s.enabled || !s.real) return { status: 400, error: 'game_off' };
     const b = real.bets.find(x => x.id === String(body.id) && x.number === acc.number);
     if (!b) return { status: 404, error: 'no_ticket' };
@@ -801,7 +910,7 @@ module.exports = function createFootball(opts) {
         sc: ev.status === 'done' ? [ev.gh, ev.ga] : ev.live && now >= ev.t ? [ev.live.gh, ev.live.ga] : null, fin: ev.status === 'done', ck: ev.status === 'done' ? { ph: 'FT', min: 90, plus: 0, left: 0, est: false } : clockOf(ev, now) }));
     const mine = acc ? real.bets.filter(b => b.number === acc.number).slice(-30).reverse()
       .map(b => ({ id: b.id, at: b.at, picks: b.picks.map((p, ix) => Object.assign({ e: p.e, k: p.k, i: p.i, odd: p.odd, h: p.h, a: p.a, t: p.t }, b.res ? b.res[ix] : legRes(p))), amount: b.amount, odds: b.odds, status: b.status, win: b.win, code: b.code || null, edits: b.edits || 0 })) : [];
-    return { ok: true, now, on: !!ODDS_KEY && s.enabled && s.real, locked: !s.enabled || !s.real, liveOn: s.live, mode: s.mode, setup: !ODDS_KEY, limits: { min: s.minBet, max: s.maxBet }, events: evs, mine, balance: w ? w.have : null, updated: real.lastFetch, error: real.lastError || '', days: DAYS, diag: Object.entries(real.diag || {}).map(([k, v]) => ({ lg: LEAGUE_NAME[k] || TITLES[k] || k, n: v.n, err: v.err })) };
+    return { ok: true, now, on: REAL_ON && s.enabled && s.real, locked: !s.enabled || !s.real, liveOn: s.live && !FREE, mode: s.mode, setup: !REAL_ON, limits: { min: s.minBet, max: s.maxBet }, events: evs, mine, balance: w ? w.have : null, updated: real.lastFetch, error: real.lastError || '', days: DAYS, diag: Object.entries(real.diag || {}).map(([k, v]) => ({ lg: LEAGUE_NAME[k] || TITLES[k] || k, n: v.n, err: v.err })) };
   }
 
   // ── what the browser sees ───────────────────────────────────
@@ -873,7 +982,7 @@ module.exports = function createFootball(opts) {
     const clean = cleanSettings(Object.assign({}, store.settings, patch || {}));
     store.settings = clean; touch(); return { settings: clean };
   }
-  const adminInfo = () => ({ modes: Object.fromEntries(Object.entries(MODES).map(([k, v]) => [k, { label: v.label, virtual: v.v, real: v.r }])), settings: store.settings, apiFootball: { on: !!AF_KEY, left: afInfo.left, error: afInfo.error }, round: { next: nxt.id, nextBets: nxt.bets.length, live: cur.id, liveBets: cur.bets.length }, real: { on: !!ODDS_KEY, events: Object.keys(real.events).length, openBets: real.bets.filter(b => b.status === 'open').length, lastFetch: real.lastFetch, lastError: real.lastError, credits: real.credits, extraMarkets: EXTRA_MKTS, leagues: AUTO ? 'auto' : LEAGUES, stats: real.stats }, stats: Object.assign({ houseNet: store.stats.staked - store.stats.paid }, store.stats) });
+  const adminInfo = () => ({ modes: Object.fromEntries(Object.entries(MODES).map(([k, v]) => [k, { label: v.label, virtual: v.v, real: v.r }])), settings: store.settings, apiFootball: { on: !!AF_KEY, left: afInfo.left, error: afInfo.error }, round: { next: nxt.id, nextBets: nxt.bets.length, live: cur.id, liveBets: cur.bets.length }, real: { on: REAL_ON, source: FREE ? 'free' : 'odds', events: Object.keys(real.events).length, openBets: real.bets.filter(b => b.status === 'open').length, lastFetch: real.lastFetch, lastError: real.lastError, credits: real.credits, extraMarkets: EXTRA_MKTS, leagues: AUTO ? 'auto' : LEAGUES, stats: real.stats }, stats: Object.assign({ houseNet: store.stats.staked - store.stats.paid }, store.stats) });
 
   // ── http entry point (server.js sends everything under /football/ here) ──
   async function handle(req, res, p) {
