@@ -223,3 +223,73 @@ dialog::backdrop { background: rgba(0,0,0,.65); }
 .cb-x { background: none; border: 0; color: #9db4e6; font-size: 1.4rem; cursor: pointer; }
 .inf-team { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; }
 .inf-team .crest { width: 38px; height: 38px; }
+
+/* ── compact odds: all three buttons always fit on a phone, with room between them ── */
+:root { --cw: 54px; --cg: 6px; --oddsw: calc(var(--cw) * 3 + var(--cg) * 2); }
+.sp-main { grid-template-columns: minmax(0, 1fr) var(--oddsw); gap: 8px; }
+.sp-head { grid-template-columns: minmax(0, 1fr) auto var(--oddsw); }
+.sp-odds { grid-template-columns: repeat(3, var(--cw)); gap: var(--cg); justify-content: end; }
+.hcols { grid-template-columns: repeat(3, var(--cw)); gap: var(--cg); }
+.hcols.two { grid-template-columns: var(--cw) calc(var(--cw) * 2 + var(--cg)); }
+.cell, .lsel { min-height: 40px; min-width: 0; padding: 0; font-size: .86rem; border-radius: 4px; }
+.cell small { font-size: .58rem; }
+.sp-row { padding: 14px 10px 6px; }
+.sp-teams { gap: 10px; }
+.tn { font-size: .9rem; }
+@media (max-width: 360px) { :root { --cw: 50px; --cg: 5px; } }
+
+/* ── booking code: one slim strip (like SportyBet's "Have a booking code? Enter it … Load") ── */
+.code-row { display: flex; align-items: center; gap: 6px; margin: 8px 0 4px; padding: 4px 6px 4px 10px; background: var(--sp-card); border-radius: 6px; }
+.code-row input { flex: 1; min-width: 0; height: 28px; padding: 0 6px; border: 0; border-radius: 4px; background: transparent; color: #e8eefb; font-size: .74rem; letter-spacing: .06em; }
+.code-row input::placeholder { text-transform: none; letter-spacing: 0; color: #8f99b3; }
+.code-row input:focus { outline: 1px solid #35d07f; background: #070a14; }
+.code-row .btn-n { flex: 0 0 auto; min-height: 0; height: 26px; padding: 0 12px; font-size: .72rem; line-height: 26px; border-radius: 5px; }
+
+/* ── H2H screen (SportyBet style) ── */
+.h2h-title { margin: 14px 0 6px; padding: 5px 0; text-align: center; color: #cfd6e6; font-size: .8rem; background: #1a2036; border-radius: 3px; }
+.h2h-sum { grid-template-columns: repeat(3, 1fr); margin: 8px 0 8px; }
+.h2h-sum div { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.h2h-sum small { color: #9aa3b8; font-size: .72rem; }
+.h2h-sum b { font-size: 1.6rem; line-height: 1.2; }
+.h2h-sum .hw b { color: #35d07f; } .h2h-sum .dr b { color: #cfd6e6; } .h2h-sum .aw b { color: #ff4d5e; }
+.h2h-bar { display: flex; height: 6px; gap: 3px; margin: 0 0 6px; }
+.h2h-bar i { display: block; border-radius: 3px; flex-basis: 0; }
+.h2h-bar .hw { background: #35d07f; } .h2h-bar .dr { background: #6b7390; } .h2h-bar .aw { background: #ff4d5e; }
+.h2h-line { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; padding: 6px 0; font-size: .86rem; }
+.h2h-line .l { text-align: left; color: #35d07f; } .h2h-line .r { text-align: right; color: #ff4d5e; }
+.h2h-line .m { color: #cfd6e6; text-align: center; font-size: .78rem; }
+.h2h-line.small b { font-size: .76rem; font-weight: 600; }
+.fps { display: flex; gap: 3px; } .fps.r { justify-content: flex-end; } .fps small { color: #9aa3b8; }
+.fp { font-style: normal; display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 3px; font-size: .68rem; font-weight: 800; color: #fff; }
+.fp.W { background: #1fa855; } .fp.D { background: #6b7390; } .fp.L { background: #e0394b; }
+.h2h-row b { font-variant-numeric: tabular-nums; }
+#infoDlg .tk-body { max-height: 62vh; overflow-y: auto; }
+.sp-foot .more { white-space: nowrap; flex: 0 0 auto; }
+.sp-foot .st { min-width: 0; }
+
+/* ── smaller type everywhere on the lists ── */
+.lt { font-size: .8rem; padding: 10px 14px; } .mt { font-size: .76rem; padding: 10px 13px; }
+.lgn { font-size: .8rem; } .flag { flex-basis: 20px; width: 20px; height: 20px; font-size: .5rem; }
+.hcols { font-size: .68rem; } .near { font-size: .68rem; padding: 3px 7px; }
+.sp-head { padding: 6px 10px; } .day-sep { font-size: .68rem; padding: 7px 10px; }
+.tn { font-size: .78rem; line-height: 1.2; } .tl { gap: 6px; } .sp-teams { gap: 7px; }
+.crest { width: 20px; height: 20px; } .sg { font-size: .85rem; }
+:root { --cw: 50px; --cg: 5px; }
+.cell, .lsel { min-height: 34px; font-size: .74rem; } .cell small { font-size: .52rem; }
+.sp-row { padding: 10px 10px 4px; }
+.sp-foot { font-size: .68rem; gap: 8px; padding: 6px 2px 4px; } .sp-foot .more { font-size: .72rem; }
+.ml { font-size: .74rem; } .mc .cell { min-height: 34px; font-size: .74rem; }
+.info svg { width: 18px; height: 18px; }
+.fb-bar .nr, .fb-bar #open { font-size: .9rem; padding: 12px 8px; }
+@media (max-width: 360px) { :root { --cw: 46px; --cg: 4px; } }
+
+/* ── round floating button: booking code + betslip count ── */
+.fab { position: fixed; right: 14px; bottom: calc(58px + env(safe-area-inset-bottom, 0px)); z-index: 6; width: 54px; height: 54px; border-radius: 50%; border: 0; background: #1fa855; display: grid; place-items: center; cursor: pointer; box-shadow: 0 3px 10px rgba(0,0,0,.5); }
+.fab[hidden] { display: none; }
+.fab b { position: absolute; top: -4px; right: -4px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px; background: #fff; color: #111; font-size: .72rem; display: grid; place-items: center; }
+.fab b[hidden] { display: none; }
+#codeDlg .cd-body { padding: 12px 14px 18px; display: grid; gap: 10px; }
+#codeDlg .code-row { margin: 0; padding: 6px 8px 6px 12px; }
+#codeDlg .code-row[hidden] { display: none; }
+#codeDlg .code-row input { height: 34px; font-size: .9rem; }
+#codeDlg .code-row .btn-n { height: 32px; line-height: 32px; font-size: .8rem; padding: 0 16px; }
