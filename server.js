@@ -1202,6 +1202,29 @@ async function route(req, res) {
       return send(res, 200, { ok: true, settings: r.settings });
     }
 
+    // ── football settings: lock the whole football (or one room), live betting on/off, easy / normal / hard, stake limits ──
+    if (p === '/admin/api/football' && req.method === 'GET') return send(res, 200, Object.assign({ ok: true }, football.adminInfo()));
+
+    if (p === '/admin/api/football' && req.method === 'POST') {
+      const b = await readBody(req);
+      const patch = {}, said = [];
+      if (b.mode !== undefined) { patch.mode = String(b.mode); said.push('difficulty ' + patch.mode); }
+      for (const [k, name] of [['enabled', 'football'], ['virtual', 'virtual TV'], ['real', 'real matches'], ['live', 'live betting']]) {
+        if (b[k] === undefined) continue;
+        patch[k] = !!b[k]; said.push(name + (patch[k] ? ' ON' : ' OFF'));
+      }
+      for (const k of ['minBet', 'maxBet']) {
+        if (b[k] === undefined) continue;
+        const v = String(b[k]).trim() === '' ? 0 : parseAmount(b[k]);
+        if (!Number.isFinite(v) || v < 0 || v > 1e12) return send(res, 400, { ok: false, error: 'bad_amount' });
+        patch[k] = v; said.push(k + ' ' + (v || 'no limit'));
+      }
+      const r = football.setSettings(patch);
+      addAudit(me, 'football_settings', said.join(', ') || 'no change');
+      save();
+      return send(res, 200, { ok: true, settings: r.settings });
+    }
+
     if (p === '/admin/api/game/reset-stats' && req.method === 'POST') {
       aviator.resetStats();
       addAudit(me, 'game_reset_stats', 'crash-plane totals reset');
