@@ -4,15 +4,53 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
-  <title>Admin</title>
+  <title>ΞΜΜYFRΘSΗ · Admin</title>
   <link rel="stylesheet" href="/style.css">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%94%91%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/admin.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%91%91%3C/text%3E%3C/svg%3E">
 </head>
 <body class="admin">
+
+  <!-- icon sprite (inline so the strict CSP is happy) -->
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <defs>
+      <linearGradient id="g-gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe27a"/><stop offset="1" stop-color="#f0a800"/></linearGradient>
+    </defs>
+    <symbol id="i-crown" viewBox="0 0 64 48"><path d="M4 14 18 26 32 4 46 26 60 14 54 42H10Z"/><rect x="10" y="37" width="44" height="5" rx="2" fill="#fff" opacity=".3"/><circle cx="4" cy="12" r="3.5"/><circle cx="32" cy="4" r="4"/><circle cx="60" cy="12" r="3.5"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M12 2.6 1.8 11.4a1 1 0 0 0 .65 1.76H4.5V21a1 1 0 0 0 1 1H9.5v-6.2h5V22h4a1 1 0 0 0 1-1v-7.84h2.05a1 1 0 0 0 .65-1.76z"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="7.5" r="4"/><path d="M1.5 21c0-4.3 3.2-7 7.5-7s7.5 2.7 7.5 7z"/><circle cx="17.6" cy="8.6" r="3" opacity=".8"/><path d="M17.6 13.6c3 .2 5 2.2 5 5.4h-4.3c0-2-.5-3.9-1.5-5.1.2-.2.5-.3.8-.3z" opacity=".8"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="7.5" r="4.6"/><path d="M3 22c0-5 4-8 9-8s9 3 9 8z"/></symbol>
+    <symbol id="i-cart" viewBox="0 0 24 24"><path d="M1.5 3h3.4l.7 2.8H22.2l-2.4 9a2 2 0 0 1-1.9 1.5H8.6a2 2 0 0 1-1.9-1.5L4.1 4.7z"/><circle cx="9" cy="20.2" r="1.9"/><circle cx="17.6" cy="20.2" r="1.9"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 3h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-8l-6 5v-5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><rect x="6" y="7" width="12" height="2" rx="1" fill="#06143d"/><rect x="6" y="11" width="8" height="2" rx="1" fill="#06143d"/></symbol>
+    <symbol id="i-gamepad" viewBox="0 0 24 24"><path d="M7 5h10a5 5 0 0 1 4.9 4l1 5.4a3.4 3.4 0 0 1-5.9 2.8L15.5 15h-7l-1.5 2.2a3.4 3.4 0 0 1-5.9-2.8l1-5.4A5 5 0 0 1 7 5z"/><path d="M7.2 8.2v1.7H5.5v1.6h1.7v1.7h1.6v-1.7h1.7V9.9H8.8V8.2z" fill="#06143d"/><circle cx="15.8" cy="9.2" r="1.15" fill="#06143d"/><circle cx="18.4" cy="11.6" r="1.15" fill="#06143d"/></symbol>
+    <symbol id="i-ball" viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="#fff"/><path d="M12 6.6 16.4 9.8 14.7 15h-5.4L7.6 9.8z" fill="#0b1b45"/><path d="M12 6.6V2.2M16.4 9.8l4.2-1.5M14.7 15l2.6 3.8M9.3 15l-2.6 3.8M7.6 9.8 3.4 8.3" stroke="#0b1b45" stroke-width="1.3" fill="none" stroke-linecap="round"/><path d="M12 1a11 11 0 1 0 .01 0" fill="none" stroke="#0b1b45" stroke-width="1" opacity=".55"/></symbol>
+    <symbol id="i-coupon" viewBox="0 0 24 24"><path d="M3.2 3.4 19 .9a1.4 1.4 0 0 1 1.6 1.2l2.1 13.2a1.4 1.4 0 0 1-1.2 1.6L5.7 19.4A1.4 1.4 0 0 1 4.1 18.2L2 5a1.4 1.4 0 0 1 1.2-1.6z" transform="translate(0 2) rotate(-4 12 11)" fill="url(#g-gold)"/><path d="M8.6 7.3a1.6 1.6 0 1 0 .02 0zM15.4 14.2a1.6 1.6 0 1 0 .02 0zM15.8 6.6 8.2 15" stroke="#4b3200" stroke-width="1.7" fill="none" stroke-linecap="round" transform="translate(0 1)"/></symbol>
+    <symbol id="i-bars" viewBox="0 0 24 24"><rect x="2" y="12" width="5.5" height="10" rx="1.6"/><rect x="9.2" y="2" width="5.5" height="20" rx="1.6"/><rect x="16.5" y="8" width="5.5" height="14" rx="1.6"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3.6 2h8.2a2 2 0 0 1 1.4.6l8.4 8.4a2 2 0 0 1 0 2.8l-7.4 7.4a2 2 0 0 1-2.8 0L2.6 12.8a2 2 0 0 1-.6-1.4V3.6A1.6 1.6 0 0 1 3.6 2z" fill="#ff3b4e"/><circle cx="7.2" cy="7.2" r="1.8" fill="#fff"/></symbol>
+    <symbol id="i-dollar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="11"/><path d="M12.9 5.2v1.6c1.9.2 3.1 1.2 3.2 2.8h-1.9c-.1-.8-.7-1.3-1.7-1.4-1 0-1.7.4-1.7 1.1 0 .6.5.9 2 1.3 2.3.6 3.6 1.2 3.6 3.1 0 1.6-1.2 2.7-3.2 2.9v1.6h-1.7v-1.6c-2-.2-3.3-1.3-3.4-3h1.9c.1.9.8 1.4 1.9 1.5 1.1 0 1.8-.4 1.8-1.1 0-.7-.5-1-2.1-1.4-2.1-.5-3.5-1.2-3.5-3 0-1.5 1.1-2.6 3-2.8V5.2z" fill="#fff"/></symbol>
+    <symbol id="i-coins" viewBox="0 0 24 24"><ellipse cx="8.5" cy="5.5" rx="6.5" ry="3"/><path d="M2 8.2v3c0 1.7 2.9 3 6.5 3s6.5-1.3 6.5-3v-3c-1.3 1.2-3.7 2-6.5 2s-5.2-.8-6.5-2z"/><path d="M2 13.2v3c0 1.7 2.9 3 6.5 3s6.5-1.3 6.5-3v-3c-1.3 1.2-3.7 2-6.5 2s-5.2-.8-6.5-2z"/><ellipse cx="16.5" cy="12.5" rx="5.5" ry="2.6" opacity=".9"/><path d="M11 15v3c0 1.4 2.5 2.6 5.5 2.6s5.5-1.2 5.5-2.6v-3c-1.1 1-3.1 1.7-5.5 1.7S12.1 16 11 15z" opacity=".9"/></symbol>
+    <symbol id="i-house" viewBox="0 0 24 24"><path d="M12 1.8 1.2 11.2a1 1 0 0 0 .66 1.76H4V21a1 1 0 0 0 1 1h4.4v-6.4h5.2V22H19a1 1 0 0 0 1-1v-8.04h2.14a1 1 0 0 0 .66-1.76z"/></symbol>
+    <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M12 1.5a7.5 7.5 0 0 0-4.3 13.6c.5.4.8 1 .8 1.6V18h7v-1.3c0-.6.3-1.2.8-1.6A7.5 7.5 0 0 0 12 1.5z"/><rect x="8.6" y="19" width="6.8" height="2" rx="1"/><rect x="9.6" y="22" width="4.8" height="1.6" rx=".8"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><path d="M10.2 1.5h3.6l.6 2.9c.6.2 1.2.5 1.7.9l2.8-1 1.8 3.1-2.2 1.9c.1.6.1 1.2 0 1.8l2.2 1.9-1.8 3.1-2.8-1c-.5.4-1.1.7-1.7.9l-.6 2.9h-3.6l-.6-2.9c-.6-.2-1.2-.5-1.7-.9l-2.8 1-1.8-3.1 2.2-1.9a6 6 0 0 1 0-1.8L3.3 7.4l1.8-3.1 2.8 1c.5-.4 1.1-.7 1.7-.9zM12 8.6a3.4 3.4 0 1 0 0 6.8 3.4 3.4 0 0 0 0-6.8z" fill-rule="evenodd" transform="translate(0 1.3)"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10h-2.4A7.6 7.6 0 1 1 12 4.4z"/><path d="M12 6.6a5.4 5.4 0 1 0 5.4 5.4H15a3 3 0 1 1-3-3z"/><path d="M13.2 10.8 20.6 3.4M17.5 2.8l.4 2.4 2.4.4 1.9-1.9-2.3-.5-.5-2.3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 2h11.6L22 7.4V19a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3V5a3 3 0 0 1 3-3z"/><path d="M6.5 2h8v5.5a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1z" fill="#06143d" opacity=".35"/><rect x="6" y="13.2" width="12" height="7.4" rx="1.2" fill="#06143d" opacity=".35"/><path d="M12 10.4v4.6M9.7 12.7h4.6" stroke="#fff" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24"><path d="M10 3H5.5A2.5 2.5 0 0 0 3 5.5v13A2.5 2.5 0 0 0 5.5 21H10" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M9 12h12M17 7.5 21.5 12 17 16.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><path d="M7 10V7.5a5 5 0 0 1 10 0V10h.6A2.4 2.4 0 0 1 20 12.4v7.2a2.4 2.4 0 0 1-2.4 2.4H6.4A2.4 2.4 0 0 1 4 19.6v-7.2A2.4 2.4 0 0 1 6.4 10zm2.2 0h5.6V7.5a2.8 2.8 0 0 0-5.6 0z" fill-rule="evenodd"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 1-14 5.3" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><path d="M4 12a8 8 0 0 1 14-5.3" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><path d="M19.4 2.4v5.6h-5.6zM4.6 21.6V16h5.6z"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="M5 15.5 12 8l7 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10.5"/><path d="M12 6v6.4l4.2 2.5" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-ticket" viewBox="0 0 24 24"><path d="M2 6h20v4a2.2 2.2 0 0 0 0 4v4H2v-4a2.2 2.2 0 0 0 0-4z"/><path d="M9.5 6v12" stroke="#06143d" stroke-width="1.5" stroke-dasharray="2 2" opacity=".6"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 1.6 3.4 4.8v6.4c0 5 3.5 9.2 8.6 11.2 5.1-2 8.6-6.2 8.6-11.2V4.8z"/><path d="m8.4 8.6 7.2 7.2M15.6 8.6l-7.2 7.2" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-whistle" viewBox="0 0 24 24"><path d="M3 9h11.2a7 7 0 1 1-5.6 11.2L3 14.5z"/><circle cx="14.8" cy="15" r="2.4" fill="#06143d" opacity=".4"/></symbol>
+  </svg>
 
   <!-- LOGIN -->
   <main id="loginView" class="login" hidden>
     <form id="loginForm" class="login-card" autocomplete="on">
+      <div class="login-brand">
+        <span class="logo"><svg class="ic crown" aria-hidden="true"><use href="#i-crown"/></svg></span>
+        <span class="wordmark">ΞΜΜYFRΘSΗ</span>
+      </div>
       <h1>Admin sign in</h1>
       <label for="u">Username</label>
       <input id="u" name="username" type="text" autocomplete="username" required>
@@ -27,34 +65,52 @@
   <div id="dashView" hidden>
     <header class="bar">
       <div class="wrap bar-in">
-        <strong id="brand">Admin</strong>
-        <nav class="tabs" role="tablist" aria-label="Sections">
-          <button class="tab on" data-tab="overview" role="tab">Overview</button>
-          <button class="tab" data-tab="players" role="tab">Players</button>
-          <button class="tab" data-tab="market" role="tab">Market</button>
-          <button class="tab" data-tab="chats" role="tab">Chats<span class="tab-badge" id="chatBadge" hidden></span></button>
-          <button class="tab" data-tab="accounts" role="tab">Accounts</button>
-          <button class="tab" data-tab="game" role="tab">Game</button>
-          <button class="tab" data-tab="football" role="tab">Football</button>
-          <button class="tab" data-tab="coupons" role="tab">Coupons</button>
-          <button class="tab" data-tab="activity" role="tab">Activity</button>
-        </nav>
-        <button id="logout" class="btn ghost">Sign out</button>
+        <span class="logo"><svg class="ic crown" aria-hidden="true"><use href="#i-crown"/></svg></span>
+        <strong id="brand" class="wordmark">ΞΜΜYFRΘSΗ</strong>
+        <span class="live-dot" title="Online" aria-label="Online"></span>
+        <button id="logout" class="logout-btn" type="button"><svg class="ic" aria-hidden="true"><use href="#i-logout"/></svg>Logout</button>
       </div>
     </header>
+
+    <nav class="wrap navgrid" role="tablist" aria-label="Sections">
+      <div class="tabs tabs-top">
+        <button class="tab on" data-tab="overview" role="tab"><svg class="ic t-home" aria-hidden="true"><use href="#i-home"/></svg><span>Overview</span></button>
+        <button class="tab" data-tab="players" role="tab"><svg class="ic t-users" aria-hidden="true"><use href="#i-users"/></svg><span>Players</span></button>
+        <button class="tab" data-tab="market" role="tab"><svg class="ic t-cart" aria-hidden="true"><use href="#i-cart"/></svg><span>Market</span></button>
+        <button class="tab" data-tab="chats" role="tab"><svg class="ic t-chat" aria-hidden="true"><use href="#i-chat"/></svg><span>Chats</span><span class="tab-badge" id="chatBadge" hidden></span></button>
+      </div>
+      <div class="tabs tabs-mid">
+        <button class="tab" data-tab="accounts" role="tab"><svg class="ic t-users" aria-hidden="true"><use href="#i-users"/></svg><span>Accounts</span></button>
+        <button class="tab" data-tab="game" role="tab"><svg class="ic t-game" aria-hidden="true"><use href="#i-gamepad"/></svg><span>Game</span></button>
+        <button class="tab" data-tab="football" role="tab"><svg class="ic t-ball" aria-hidden="true"><use href="#i-ball"/></svg><span>Football</span></button>
+        <button class="tab" data-tab="coupons" role="tab"><svg class="ic t-coupon" aria-hidden="true"><use href="#i-coupon"/></svg><span>Coupons</span></button>
+      </div>
+      <div class="tabs tabs-low">
+        <button class="tab" data-tab="activity" role="tab"><svg class="ic t-bars" aria-hidden="true"><use href="#i-bars"/></svg><span>Activity</span></button>
+        <button class="tab-out" id="signout" type="button"><svg class="ic" aria-hidden="true"><use href="#i-tag"/></svg><span>Sign out</span></button>
+      </div>
+    </nav>
 
     <main class="wrap">
       <p id="toast" class="toast" role="status" hidden></p>
 
       <!-- overview -->
       <section id="tab-overview" class="panel">
-        <h2>Overview</h2>
-        <div class="stats" id="stats"></div>
-        <p class="hint">Player numbers come from the bot. It sends fresh standings every 5 minutes and right after it applies one of your edits.</p>
+        <div class="card">
+          <div class="card-head">
+          <svg class="ic h-ic" aria-hidden="true"><use href="#i-bars"/></svg>
+          <h2>Overview</h2>
+          <button class="card-toggle" type="button" aria-expanded="true" aria-label="Collapse Overview"><svg class="ic" aria-hidden="true"><use href="#i-chev"/></svg></button>
+        </div>
+          <div class="card-body">
+            <div class="stats tiles" id="stats"></div>
+            <div class="tip"><span class="tip-ic"><svg class="ic" aria-hidden="true"><use href="#i-bulb"/></svg></span><p>Player numbers come from the bot. It sends fresh standings every 5 minutes and right after it applies one of your edits.</p></div>
+          </div>
+        </div>
       </section>
 
       <!-- players -->
-      <section id="tab-players" class="panel" hidden>
+      <section id="tab-players" class="panel card-panel" hidden>
         <h2>Players</h2>
         <div class="split">
           <div>
@@ -111,7 +167,7 @@
       </section>
 
       <!-- market -->
-      <section id="tab-market" class="panel" hidden>
+      <section id="tab-market" class="panel card-panel" hidden>
         <h2>Market</h2>
         <p class="hint" id="marketNote">Changes are applied by the bot within about 10 seconds.</p>
         <h3>Create new goods &amp; coins</h3>
@@ -153,7 +209,7 @@
       </section>
 
       <!-- chats -->
-      <section id="tab-chats" class="panel" hidden>
+      <section id="tab-chats" class="panel card-panel" hidden>
         <h2>Customer chat</h2>
         <p class="hint">Visitors write to you from the round chat bubble on the website — they do not need to log in. If someone forgot a password, ask for their number, then reset it in the Accounts tab.</p>
         <div class="chat-wrap">
@@ -171,7 +227,7 @@
       </section>
 
       <!-- accounts -->
-      <section id="tab-accounts" class="panel" hidden>
+      <section id="tab-accounts" class="panel card-panel" hidden>
         <h2>Website accounts</h2>
         <p class="hint" id="accNote">Players who can log in on the shop page. Changes are applied by the bot within about 10 seconds.</p>
         <div class="row">
@@ -189,66 +245,107 @@
 
       <!-- game -->
       <section id="tab-game" class="panel" hidden>
-        <h2>Crash plane game</h2>
-        <p class="hint">Players bet with the money in their own wallet. When the wallet is empty they cannot play. A new difficulty starts with the next round.</p>
-        <div class="stats" id="gStats"></div>
-
-        <h3>Settings</h3>
-        <form id="gameForm" class="editor" autocomplete="off">
-          <label for="gDiff">Difficulty</label>
-          <select id="gDiff"></select>
-          <p class="hint" id="gDiffNote"></p>
-          <label for="gOn">Game</label>
-          <select id="gOn"><option value="1">On — players can bet</option><option value="0">Off — closed for new bets</option></select>
-          <label for="gMin">Smallest stake</label>
-          <input id="gMin" type="text" inputmode="text" placeholder="1, 100, 1k">
-          <label for="gMax">Biggest stake (empty = no limit)</label>
-          <input id="gMax" type="text" inputmode="text" placeholder="no limit, 50k, 1m">
-          <button type="submit" class="btn primary">Save settings</button>
-        </form>
-
-        <h3>Waiting to settle with the bot</h3>
-        <p class="hint">Stakes and wins are sent to the bot as one combined change per player. A negative number is money the bot still has to take from that wallet.</p>
-        <div class="table-scroll">
-          <table class="board">
-            <thead><tr><th>Player</th><th class="n">Change</th><th>Status</th></tr></thead>
-            <tbody id="gWait"></tbody>
-          </table>
+        <div class="card">
+          <div class="card-head">
+          <svg class="ic h-ic" aria-hidden="true"><use href="#i-bars"/></svg>
+          <h2>Game Overview</h2>
+          <button class="card-toggle" type="button" aria-expanded="true" aria-label="Collapse Game Overview"><svg class="ic" aria-hidden="true"><use href="#i-chev"/></svg></button>
         </div>
-        <p class="empty" id="gWaitEmpty" hidden>Nothing waiting. Everything is settled.</p>
-        <p><button id="gReset" class="btn small ghost" type="button">Reset totals</button></p>
+          <div class="card-body">
+            <div class="stats tiles" id="gStats"></div>
+            <div class="tip"><span class="tip-ic"><svg class="ic" aria-hidden="true"><use href="#i-bulb"/></svg></span><p>Stakes and wins are sent to the bot as one combined change per player. A negative number is money the bot still has to take from that wallet.</p></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+          <svg class="ic h-ic" aria-hidden="true"><use href="#i-gear"/></svg>
+          <h2>Game Settings</h2>
+          <button class="card-toggle" type="button" aria-expanded="true" aria-label="Collapse Game Settings"><svg class="ic" aria-hidden="true"><use href="#i-chev"/></svg></button>
+        </div>
+          <div class="card-body">
+            <p class="hint">Players bet with the money in their own wallet. When the wallet is empty they cannot play. A new difficulty starts with the next round.</p>
+            <form id="gameForm" class="settings" autocomplete="off">
+              <div class="field f-on"><label for="gOn"><svg class="ic" aria-hidden="true"><use href="#i-gamepad"/></svg>Game</label>
+                <div class="sel"><span class="dot" aria-hidden="true"></span><select id="gOn"><option value="1">ON  –  Players can bet</option><option value="0">OFF  –  Closed for new bets</option></select></div></div>
+              <div class="field"><label for="gDiff"><svg class="ic" aria-hidden="true"><use href="#i-target"/></svg>Difficulty</label>
+                <div class="sel"><select id="gDiff"></select></div></div>
+              <div class="field"><label for="gMin"><svg class="ic" aria-hidden="true"><use href="#i-coins"/></svg>Smallest stake</label>
+                <input id="gMin" type="text" inputmode="text" placeholder="1, 100, 1k"></div>
+              <div class="field"><label for="gMax"><svg class="ic" aria-hidden="true"><use href="#i-coins"/></svg>Biggest stake (empty = no limit)</label>
+                <input id="gMax" type="text" inputmode="text" placeholder="no limit, 50k, 1m"></div>
+              <p class="hint wide" id="gDiffNote"></p>
+              <button type="submit" class="btn save wide"><svg class="ic" aria-hidden="true"><use href="#i-save"/></svg>Save Settings</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+          <svg class="ic h-ic" aria-hidden="true"><use href="#i-refresh"/></svg>
+          <h2>Waiting to settle with the bot</h2>
+          <button class="card-toggle" type="button" aria-expanded="true" aria-label="Collapse Waiting to settle with the bot"><svg class="ic" aria-hidden="true"><use href="#i-chev"/></svg></button>
+        </div>
+          <div class="card-body">
+            <div class="table-scroll">
+              <table class="board">
+                <thead><tr><th>Player</th><th class="n">Change</th><th>Status</th></tr></thead>
+                <tbody id="gWait"></tbody>
+              </table>
+            </div>
+            <p class="empty" id="gWaitEmpty" hidden>Nothing waiting. Everything is settled.</p>
+            <p><button id="gReset" class="btn small ghost" type="button">Reset totals</button></p>
+          </div>
+        </div>
       </section>
 
       <!-- football -->
       <section id="tab-football" class="panel" hidden>
-        <h2>Football</h2>
-        <p class="hint">Lock football for everybody, lock only one room, switch live betting on or off, and choose Easy, Normal or Hard. A locked room shows a lock to players instead of the games. Tickets already placed are still paid.</p>
-        <div class="stats" id="fStats"></div>
+        <div class="card">
+          <div class="card-head">
+          <svg class="ic h-ic" aria-hidden="true"><use href="#i-ball"/></svg>
+          <h2>Football Overview</h2>
+          <button class="card-toggle" type="button" aria-expanded="true" aria-label="Collapse Football Overview"><svg class="ic" aria-hidden="true"><use href="#i-chev"/></svg></button>
+        </div>
+          <div class="card-body">
+            <div class="chips" id="fChips"></div>
+            <div class="stats tiles" id="fStats"></div>
+            <div class="tip"><span class="tip-ic"><svg class="ic" aria-hidden="true"><use href="#i-bulb"/></svg></span><p>Lock football for everybody, lock only one room, switch live betting on or off, and choose Easy, Normal or Hard. A locked room shows a lock to players instead of the games. Tickets already placed are still paid.</p></div>
+          </div>
+        </div>
 
-        <h3>Settings</h3>
-        <form id="fbForm" class="editor" autocomplete="off">
-          <label for="fOn">Football (everything)</label>
-          <select id="fOn"><option value="1">Open — players can enter</option><option value="0">Locked — nobody can play or enter</option></select>
-          <label for="fVirt">Virtual TV room</label>
-          <select id="fVirt"><option value="1">Open</option><option value="0">Locked</option></select>
-          <label for="fReal">Real matches room</label>
-          <select id="fReal"><option value="1">Open</option><option value="0">Locked</option></select>
-          <label for="fLive">Live betting (games already started)</label>
-          <select id="fLive"><option value="1">On — players can bet on live games</option><option value="0">Off — live games are locked</option></select>
-          <label for="fMode">Difficulty</label>
-          <select id="fMode"></select>
-          <p class="hint" id="fModeNote"></p>
-          <label for="fMin">Smallest stake</label>
-          <input id="fMin" type="text" inputmode="text" placeholder="1, 100, 1k">
-          <label for="fMax">Biggest stake (empty = no limit)</label>
-          <input id="fMax" type="text" inputmode="text" placeholder="no limit, 50k, 1m">
-          <button type="submit" class="btn primary">Save football settings</button>
-        </form>
-        <p class="hint" id="fApi"></p>
+        <div class="card">
+          <div class="card-head">
+          <svg class="ic h-ic" aria-hidden="true"><use href="#i-gear"/></svg>
+          <h2>Football Settings</h2>
+          <button class="card-toggle" type="button" aria-expanded="true" aria-label="Collapse Football Settings"><svg class="ic" aria-hidden="true"><use href="#i-chev"/></svg></button>
+        </div>
+          <div class="card-body">
+            <form id="fbForm" class="settings" autocomplete="off">
+              <div class="field f-on"><label for="fOn"><svg class="ic" aria-hidden="true"><use href="#i-ball"/></svg>Football (everything)</label>
+                <div class="sel"><span class="dot" aria-hidden="true"></span><select id="fOn"><option value="1">OPEN  –  Players can enter</option><option value="0">LOCKED  –  Nobody can play or enter</option></select></div></div>
+              <div class="field"><label for="fLive"><svg class="ic" aria-hidden="true"><use href="#i-whistle"/></svg>Live betting</label>
+                <div class="sel"><span class="dot" aria-hidden="true"></span><select id="fLive"><option value="1">ON  –  Bet on live games</option><option value="0">OFF  –  Live games locked</option></select></div></div>
+              <div class="field f-on"><label for="fVirt"><svg class="ic" aria-hidden="true"><use href="#i-gamepad"/></svg>Virtual TV room</label>
+                <div class="sel"><span class="dot" aria-hidden="true"></span><select id="fVirt"><option value="1">OPEN</option><option value="0">LOCKED</option></select></div></div>
+              <div class="field f-on"><label for="fReal"><svg class="ic" aria-hidden="true"><use href="#i-ball"/></svg>Real matches room</label>
+                <div class="sel"><span class="dot" aria-hidden="true"></span><select id="fReal"><option value="1">OPEN</option><option value="0">LOCKED</option></select></div></div>
+              <div class="field wide"><label for="fMode"><svg class="ic" aria-hidden="true"><use href="#i-target"/></svg>Difficulty</label>
+                <div class="sel"><select id="fMode"></select></div></div>
+              <p class="hint wide" id="fModeNote"></p>
+              <div class="field"><label for="fMin"><svg class="ic" aria-hidden="true"><use href="#i-coins"/></svg>Smallest stake</label>
+                <input id="fMin" type="text" inputmode="text" placeholder="1, 100, 1k"></div>
+              <div class="field"><label for="fMax"><svg class="ic" aria-hidden="true"><use href="#i-coins"/></svg>Biggest stake (empty = no limit)</label>
+                <input id="fMax" type="text" inputmode="text" placeholder="no limit, 50k, 1m"></div>
+              <button type="submit" class="btn save wide"><svg class="ic" aria-hidden="true"><use href="#i-save"/></svg>Save Settings</button>
+            </form>
+            <p class="hint" id="fApi"></p>
+          </div>
+        </div>
       </section>
 
       <!-- coupons -->
-      <section id="tab-coupons" class="panel" hidden>
+      <section id="tab-coupons" class="panel card-panel" hidden>
         <h2>Coupons</h2>
         <form id="couponForm" class="inline-form" autocomplete="off">
           <div><label for="cAmount">Value each</label><input id="cAmount" type="text" placeholder="10k, 1m" required></div>
@@ -275,7 +372,7 @@
       </section>
 
       <!-- activity -->
-      <section id="tab-activity" class="panel" hidden>
+      <section id="tab-activity" class="panel card-panel" hidden>
         <h2>Money edits</h2>
         <div class="table-scroll">
           <table class="board">
@@ -299,6 +396,13 @@
         </div>
       </section>
     </main>
+
+    <div class="wrap"><nav class="dock" aria-label="Quick actions">
+      <button type="button" data-go="players"><svg class="ic" aria-hidden="true"><use href="#i-user"/></svg>PLAYER</button>
+      <button type="button" data-go="players" data-focus="amount"><svg class="ic" aria-hidden="true"><use href="#i-refresh"/></svg>CHANGE</button>
+      <button type="button" data-go="overview"><svg class="ic" aria-hidden="true"><use href="#i-bars"/></svg>STATUS</button>
+    </nav></div>
+    <footer class="foot"><span class="rule"></span><svg class="ic" aria-hidden="true"><use href="#i-lock"/></svg><span id="host">admin</span><span class="rule"></span></footer>
   </div>
 
   <script src="/admin.js"></script>
