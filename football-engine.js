@@ -613,31 +613,94 @@ module.exports = function createFootball(opts) {
   }
   const STAT_ROWS = [['Ball Possession', 'Possession'], ['Total Shots', 'Shots'], ['Shots on Goal', 'Shots on target'], ['Corner Kicks', 'Corners'], ['Fouls', 'Fouls'],
     ['Yellow Cards', 'Yellow cards'], ['Red Cards', 'Red cards'], ['Goalkeeper Saves', 'Saves'], ['Offsides', 'Offsides']];
-  async function infoView(ev) {                                                                // what the (i) / chart icon on a match shows
-    const now = Date.now(), l = ev.live, out = { ok: true, id: ev.id, lg: ev.lgName, h: ev.h, a: ev.a, t: ev.t, api: !!AF_KEY,
-      sc: ev.status === 'done' ? [ev.gh, ev.ga] : l && now >= ev.t ? [l.gh, l.ga] : null, fin: ev.status === 'done', ck: clockOf(ev, now), h2h: null, stats: null };
-    if (!AF_KEY) return out;
+  // ── H2H + recent form. Works with NO key: ESPN's free match page (previous meetings + last 5 of each team), and each team's own results list as back-up.
+  //    (API-Football, when a key is set, is still used first for the previous meetings.)
+  const espnJ = async (url) => { const r = await fetch(url, { signal: AbortSignal.timeout(15000), headers: { accept: 'application/json' } }); if (!r.ok) throw new Error('espn ' + r.status); return r.json(); };
+  const num = (v) => { if (v && typeof v === 'object') v = v.displayValue !== undefined ? v.displayValue : v.value; const n = parseInt(String(v === undefined || v === null ? '' : v).replace(/[^0-9]/g, ''), 10); return Number.isFinite(n) ? n : NaN; };
+  function formRows(b) {                                                                     // ESPN "form" / "headToHeadGames" block → rows
+    const tn = b && b.team && (b.team.displayName || b.team.name); if (!tn) return [];
+    return (Array.isArray(b.events) ? b.events : []).map(x => {
+      const on = x && x.opponent && (x.opponent.displayName || x.opponent.name); if (!on) return null;
+      const away = String(x.atVs || '').trim() === '@', gh = num(x.homeTeamScore), ga = num(x.awayTeamScore), d = x.gameDate || x.date;
+      if (!Number.isFinite(gh) || !Number.isFinite(ga) || !Date.parse(d)) return null;
+      const lg = x.leagueName || (x.league && (x.league.name || x.league.abbreviation)) || x.leagueAbbreviation || '';
+      return { d, lg, h: away ? on : tn, a: away ? tn : on, gh, ga };
+    }).filter(Boolean);
+  }
+  function schedRows(j) {                                                                    // ESPN team results list → finished rows
+    return (Array.isArray(j && j.events) ? j.events : []).map(e => {
+      const c = e && e.competitions && e.competitions[0], cs = c && Array.isArray(c.competitors) ? c.competitors : [];
+      const H = cs.find(x => x.homeAway === 'home'), A = cs.find(x => x.homeAway === 'away'); if (!H || !A) return null;
+      const st = (c.status && c.status.type) || (e.status && e.status.type) || {}; if (!st.completed && st.state !== 'post') return null;
+      const gh = num(H.score), ga = num(A.score), hn = H.team && (H.team.displayName || H.team.name), an = A.team && (A.team.displayName || A.team.name), d = e.date || c.date;
+      if (!Number.isFinite(gh) || !Number.isFinite(ga) || !hn || !an || !Date.parse(d)) return null;
+      return { d, lg: (e.league && (e.league.name || e.league.abbreviation)) || '', h: hn, a: an, gh, ga };
+    }).filter(Boolean);
+  }
+  const feedCache = new Map();
+  async function espnFeed(ev) {                                                              // → { h2h: rows, fh: rows, fa: rows }
+    const c = feedCache.get(ev.id); if (c && Date.now() - c.at < 6 * 3600000) return c.v;
+    const eid = String(ev.id).replace(/^e/, ''); let h2h = [], fh = [], fa = [];
     try {
-      if (!(await afFindId(ev))) return out;
-      const key = ev.afH + '-' + ev.afA; let h = h2hCache.get(key);
-      if (!h || now - h.at > 12 * 3600000) {
-        const list = await afGet('/fixtures/headtohead?h2h=' + key + '&last=8');
-        h = { at: now, rows: list.filter(f => f.fixture.id !== ev.afId && f.goals && Number.isInteger(f.goals.home) && Number.isInteger(f.goals.away))
-          .map(f => ({ d: f.fixture.date, lg: f.league && f.league.name, h: f.teams.home.name, a: f.teams.away.name, hid: f.teams.home.id, gh: f.goals.home, ga: f.goals.away })).slice(0, 8) }; h2hCache.set(key, h);
-      }
-      let hw = 0, aw = 0, dr = 0;
-      h.rows.forEach(r => { const mine = r.hid === ev.afH ? r.gh - r.ga : r.ga - r.gh; if (mine > 0) hw++; else if (mine < 0) aw++; else dr++; });
-      out.h2h = { rows: h.rows.map(r => ({ d: r.d, lg: r.lg, h: r.h, a: r.a, gh: r.gh, ga: r.ga })), sum: [hw, dr, aw] };
-      if (now >= ev.t) {
-        let st = statCache.get(ev.afId);
-        if (!st || now - st.at > 30000) {
-          const res = await afGet('/fixtures/statistics?fixture=' + ev.afId), hs = res.find(x => x.team && x.team.id === ev.afH) || res[0], as = res.find(x => x.team && x.team.id === ev.afA) || res[1];
-          const val = (t, k) => { const r = t && (t.statistics || []).find(x => x.type === k); return r ? (r.value === null ? 0 : r.value) : null; };
-          st = { at: now, rows: hs && as ? STAT_ROWS.map(([k, label]) => ({ k: label, h: val(hs, k), a: val(as, k) })).filter(r => r.h !== null || r.a !== null) : [] }; statCache.set(ev.afId, st);
+      const j = await espnJ(ESPN + encodeURIComponent(ev.lg) + '/summary?event=' + encodeURIComponent(eid));
+      for (const b of (j.boxscore && j.boxscore.form) || j.form || []) { const rows = formRows(b), n = b && b.team && (b.team.displayName || b.team.name); if (sameTeam(n, ev.h)) fh = rows; else if (sameTeam(n, ev.a)) fa = rows; }
+      for (const b of j.headToHeadGames || []) { const r = formRows(b); if (r.length > h2h.length) h2h = r; }
+      if ((!ev.hid || !ev.aid) && j.header && j.header.competitions) { const cs = (j.header.competitions[0] || {}).competitors || []; const H = cs.find(x => x.homeAway === 'home'), A = cs.find(x => x.homeAway === 'away'); if (H && A && H.team && A.team) { ev.hid = String(H.team.id); ev.aid = String(A.team.id); } }
+    } catch (x) { }
+    if ((!h2h.length || fh.length < 3 || fa.length < 3) && ev.hid && ev.aid) {              // back-up: each team's own finished games
+      const [sh, sa] = await Promise.all([ev.hid, ev.aid].map(id => espnJ(ESPN + encodeURIComponent(ev.lg) + '/teams/' + encodeURIComponent(id) + '/schedule').then(schedRows).catch(() => [])));
+      const newest = (r) => r.slice().sort((p, q) => Date.parse(q.d) - Date.parse(p.d));
+      if (fh.length < 3) fh = newest(sh).slice(0, 5); if (fa.length < 3) fa = newest(sa).slice(0, 5);
+      if (!h2h.length) h2h = [...sh, ...sa].filter(r => (sameTeam(r.h, ev.h) && sameTeam(r.a, ev.a)) || (sameTeam(r.h, ev.a) && sameTeam(r.a, ev.h)));
+    }
+    const v = { h2h, fh, fa }; if (h2h.length || fh.length || fa.length) feedCache.set(ev.id, { at: Date.now(), v }); return v;
+  }
+  const recent = (rows, past) => { const seen = new Set(); return rows.filter(r => Date.parse(r.d) < past).sort((p, q) => Date.parse(q.d) - Date.parse(p.d)).filter(r => { const k = r.d.slice(0, 10) + r.h + r.a; if (seen.has(k)) return false; seen.add(k); return true; }); };
+  const gd = (r, name) => sameTeam(r.h, name) ? r.gh - r.ga : r.ga - r.gh;                    // goal difference from that team's side
+  function h2hView(ev, rows) {
+    rows = recent(rows, ev.t - 3600000).slice(0, 10); if (!rows.length) return null;
+    const side = (name) => { let pts = 0, gf = 0, best = null; for (const r of rows) { const x = gd(r, name), f = sameTeam(r.h, name) ? r.gh : r.ga; gf += f; pts += x > 0 ? 3 : x === 0 ? 1 : 0; if (x > 0 && (!best || x > best.x)) best = { x, s: f + ':' + (f - x), d: r.d }; } return { pts: pts / rows.length, gf: gf / rows.length, best: best && { s: best.s, d: best.d } }; };
+    const hs = side(ev.h), as = side(ev.a); let hw = 0, dr = 0, aw = 0; rows.forEach(r => { const x = gd(r, ev.h); if (x > 0) hw++; else if (x < 0) aw++; else dr++; });
+    return { rows, sum: [hw, dr, aw], best: [hs.best, as.best], avg: { pts: [hs.pts, as.pts], gf: [hs.gf, as.gf] } };
+  }
+  function formView(ev, rows, name) {                                                        // last 5 games of one team + simple stats
+    rows = recent(rows, ev.t - 3600000).slice(0, 5); if (!rows.length) return null;
+    const n = rows.length, out = rows.map(r => Object.assign({}, r, { r: gd(r, name) > 0 ? 'W' : gd(r, name) < 0 ? 'L' : 'D' }));
+    const f = (fn) => Math.round(rows.filter(fn).length / n * 100);
+    return { rows: out, w: out.filter(r => r.r === 'W').length, d: out.filter(r => r.r === 'D').length, l: out.filter(r => r.r === 'L').length,
+      gf: rows.reduce((s, r) => s + (sameTeam(r.h, name) ? r.gh : r.ga), 0) / n, ga: rows.reduce((s, r) => s + (sameTeam(r.h, name) ? r.ga : r.gh), 0) / n,
+      btts: f(r => r.gh > 0 && r.ga > 0), o15: f(r => r.gh + r.ga > 1), o25: f(r => r.gh + r.ga > 2) };
+  }
+  async function infoView(ev) {                                                              // what the (i) / chart icon on a match shows
+    const now = Date.now(), l = ev.live, out = { ok: true, id: ev.id, lg: ev.lgName, h: ev.h, a: ev.a, t: ev.t, api: true,
+      sc: ev.status === 'done' ? [ev.gh, ev.ga] : l && now >= ev.t ? [l.gh, l.ga] : null, fin: ev.status === 'done', ck: clockOf(ev, now), h2h: null, form: null, stats: null };
+    let rows = [];
+    if (AF_KEY) {
+      try {
+        if (await afFindId(ev)) {
+          const key = ev.afH + '-' + ev.afA; let h = h2hCache.get(key);
+          if (!h || now - h.at > 12 * 3600000) {
+            const list = await afGet('/fixtures/headtohead?h2h=' + key + '&last=10');
+            h = { at: now, rows: list.filter(f => f.fixture.id !== ev.afId && f.goals && Number.isInteger(f.goals.home) && Number.isInteger(f.goals.away))
+              .map(f => ({ d: f.fixture.date, lg: f.league && f.league.name, h: f.teams.home.name, a: f.teams.away.name, gh: f.goals.home, ga: f.goals.away })) }; h2hCache.set(key, h);
+          }
+          rows = h.rows;
+          if (now >= ev.t) {
+            let st = statCache.get(ev.afId);
+            if (!st || now - st.at > 30000) {
+              const res = await afGet('/fixtures/statistics?fixture=' + ev.afId), hs = res.find(x => x.team && x.team.id === ev.afH) || res[0], as = res.find(x => x.team && x.team.id === ev.afA) || res[1];
+              const val = (t, k) => { const r = t && (t.statistics || []).find(x => x.type === k); return r ? (r.value === null ? 0 : r.value) : null; };
+              st = { at: now, rows: hs && as ? STAT_ROWS.map(([k, label]) => ({ k: label, h: val(hs, k), a: val(as, k) })).filter(r => r.h !== null || r.a !== null) : [] }; statCache.set(ev.afId, st);
+            }
+            out.stats = st.rows;
+          }
         }
-        out.stats = st.rows;
-      }
-    } catch (x) { out.error = 'Data is not available right now.'; afInfo.error = String(x.message || x).slice(0, 120); }
+      } catch (x) { afInfo.error = String(x.message || x).slice(0, 120); }
+    }
+    let feed = { h2h: [], fh: [], fa: [] };
+    if (ev.free) { try { feed = await espnFeed(ev); } catch (x) { } }
+    out.h2h = h2hView(ev, rows.length ? rows : feed.h2h);
+    const fh = formView(ev, feed.fh, ev.h), fa = formView(ev, feed.fa, ev.a); out.form = fh || fa ? { h: fh, a: fa } : null;
     return out;
   }
 
@@ -752,10 +815,10 @@ module.exports = function createFootball(opts) {
     let ev = real.events[id];
     if (/POSTPONED|CANCEL|ABANDON/i.test(nm)) { if (ev && ev.status === 'open') { ev.status = 'void'; touch(); } return 0; }
     if (state === 'pre') {
-      if (ev) { if (ev.status === 'open' && ev.t > Date.now() && ev.t !== t) { ev.t = t; touch(); } return 0; }          // moved to another time: keep the same match
+      if (ev) { if (!ev.hid && H.team.id) { ev.hid = String(H.team.id); ev.aid = String(A.team.id); } if (ev.status === 'open' && ev.t > Date.now() && ev.t !== t) { ev.t = t; touch(); } return 0; }          // moved to another time: keep the same match
       if (t <= Date.now()) return 0;
       const o = freeOdds(hn, an, H, A); if (!o.x) return 0;
-      ev = real.events[id] = { id, lg: slug, lgName: ESPN_LG[slug] || slug, h: hn, a: an, t, base: o, ex: {}, exAt: 0, status: 'open', gh: null, ga: null, free: true };
+      ev = real.events[id] = { id, lg: slug, lgName: ESPN_LG[slug] || slug, h: hn, a: an, t, base: o, ex: {}, exAt: 0, status: 'open', gh: null, ga: null, free: true, hid: H.team.id ? String(H.team.id) : '', aid: A.team.id ? String(A.team.id) : '' };
       compose(ev); touch(); return 1;
     }
     if (!ev || ev.status !== 'open') return 0;                                              // a game we never listed (no odds) is ignored
@@ -929,7 +992,7 @@ module.exports = function createFootball(opts) {
   function realView(acc) {
     const now = Date.now(), w = acc ? walletOf(acc) : null, s = store.settings;
     const day0 = new Date(now); day0.setHours(0, 0, 0, 0);                    // server midnight: today's finished games stay on the list
-    const evs = Object.values(real.events).filter(ev => (ev.status === 'open' && ev.t > now - 4 * 3600000) || (ev.status === 'done' && ev.t > Math.min(now - 6 * 3600000, day0.getTime()))).sort((a, b) => a.t - b.t).slice(0, 250)
+    const evs = Object.values(real.events).filter(ev => (ev.status === 'open' && ev.t > now - 4 * 3600000) || (ev.status === 'done' && ev.t > Math.min(now - 6 * 3600000, day0.getTime()))).sort((a, b) => a.t - b.t)
       .map(ev => ({ id: ev.id, lg: ev.lgName, h: ev.h, a: ev.a, t: ev.t, o: oddsFor(ev), closed: !canBet(ev, now).ok, why: canBet(ev, now).why || '',
         sc: ev.status === 'done' ? [ev.gh, ev.ga] : ev.live && now >= ev.t ? [ev.live.gh, ev.live.ga] : null, fin: ev.status === 'done', ck: ev.status === 'done' ? { ph: 'FT', min: 90, plus: 0, left: 0, est: false } : clockOf(ev, now) }));
     const mine = acc ? real.bets.filter(b => b.number === acc.number).slice(-30).reverse()
