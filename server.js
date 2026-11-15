@@ -56,6 +56,10 @@ for (const k of ['adjustments', 'audit', 'jobs']) if (!Array.isArray(db[k])) db[
 if (!db.chats || typeof db.chats !== 'object') db.chats = {};   // live chat: visitors <-> customer care
 if (!Array.isArray(db.transfers)) db.transfers = [];            // player -> player money transfers made on the site
 if (!Array.isArray(db.gameAdj)) db.gameAdj = [];                // crash-plane wallet settlements waiting for the bot
+for (const k of ['blocked', 'frozen', 'removed']) if (!db[k] || typeof db[k] !== 'object' || Array.isArray(db[k])) db[k] = {};
+//   db.blocked[number] = banned numbers: no login, no new account, off the leaderboard
+//   db.frozen[number]  = frozen accounts: no login until the player talks to customer care
+//   db.removed[botId]  = players the admin removed ("start fresh"): hidden until the bot confirms the reset
 
 function save() {
   const tmp = DB_FILE + '.tmp';
@@ -240,6 +244,39 @@ function newJob(fields) {
   db.jobs.unshift(j);
   if (db.jobs.length > 1500) db.jobs.length = 1500;
   return j;
+}
+
+// ── remove / ban / freeze ───────────────────────────────────────
+const numOfId = (id) => last10(String(id || '').split('@')[0]);           // bot id → WhatsApp number (last 10 digits)
+const accOfId = (id) => Object.values(db.accounts).find(a => a.jid === id) || null;
+const numberFor = (id) => { const a = accOfId(id); return a ? a.number : numOfId(id); };
+// a player the leaderboard must not show: removed by the admin, or banned
+const hiddenId = (id) => !!db.removed[id] || !!db.blocked[numberFor(id)];
+const accountOk = (acc) => !!acc && !acc.banned && !db.blocked[acc.number] && !db.frozen[acc.number];
+function dropSignups(number) { for (const [c, sg] of Object.entries(db.signups)) if (sg.number === number) delete db.signups[c]; }
+function banNumber(number, banned, id, name, by) {
+  const acc = db.accounts[number] || null;
+  if (banned) {
+    db.blocked[number] = { at: Date.now(), by, id: (acc && acc.jid) || id || '', name: String(name || (acc && acc.name) || 'Player').slice(0, 60) };
+    killSessions(number); dropSignups(number);
+  } else delete db.blocked[number];
+  if (acc) {
+    acc.banned = !!banned;
+    newJob({ type: 'acct_ban', user: acc.jid, number, banned: !!banned, by });
+  }
+}
+function freezeNumber(number, frozen, name, by) {
+  if (frozen) { db.frozen[number] = { at: Date.now(), by, name: String(name || 'Player').slice(0, 60) }; killSessions(number); }
+  else delete db.frozen[number];
+}
+function removePlayer(id, name, by) {                                   // "start fresh": nobody ever existed
+  const number = numberFor(id), acc = accOfId(id);
+  if (acc) { killSessions(acc.number); delete db.accounts[acc.number]; newJob({ type: 'acct_del', user: acc.jid, number: acc.number, by }); }
+  dropSignups(number); delete db.logins[number]; delete db.frozen[number];
+  delete db.users[id]; delete db.balances[id];
+  const job = newJob({ type: 'player_reset', user: id, number, by, userName: name });   // the bot wipes money, level, items
+  db.removed[id] = { at: Date.now(), by, name: String(name || 'Player').slice(0, 60), job: job.id, number };
+  return job;
 }
 
 // ── wallet + transfers ──────────────────────────────────────────
@@ -466,6 +503,7 @@ async function route(req, res) {
         };
         if (pickInv(u) !== undefined) users[id].inv = normInv(pickInv(u));
       }
+      for (const id of Object.keys(db.removed)) delete users[id];       // removed players stay gone until the bot confirms the reset
       db.users = users;
       db.usersUpdatedAt = Date.now();
       save();
@@ -490,11 +528,12 @@ async function route(req, res) {
         for (const a of body.accounts.slice(0, 20000)) {
           const key = last10(a?.number);
           if (key.length < 7 || !/^s1\$[0-9a-f]{32}\$[0-9a-f]{128}$/.test(String(a.hash || ''))) continue;
+          if (db.removed[str(a.jid, 100)]) continue;
           acc[key] = { number: key, jid: str(a.jid, 100), hash: a.hash, name: str(a.name || 'Player', 60) };
         }
         for (const a of body.accounts.slice(0, 20000)) {
           const key = last10(a?.number);
-          if (acc[key]) acc[key].banned = !!a.banned;
+          if (acc[key]) acc[key].banned = !!a.banned || !!db.blocked[key];
         }
         // admin changes the bot has not applied yet still win for now
         for (const a of db.jobs.filter(x => OPEN(x) && String(x.type).startsWith('acct_')).reverse()) {
@@ -512,6 +551,7 @@ async function route(req, res) {
         const bal = {};
         for (const [jid, b] of Object.entries(body.balances).slice(0, 20000)) {
           const k = jid.slice(0, 100);
+          if (db.removed[k]) continue;
           bal[k] = { balance: int(b?.balance), bank: int(b?.bank), level: Math.max(1, int(b?.level)), name: str(b?.name || 'Player', 60) };
           if (pickInv(b) !== undefined) bal[k].inv = normInv(pickInv(b));   // inventory, if the bot sends it
         }
@@ -529,6 +569,7 @@ async function route(req, res) {
       const who = last10(body.number);
       // the bot must tell us which WhatsApp number sent the code, and it must be the number that signed up
       if (!who || who !== sg.number) return send(res, 200, { ok: false, error: 'number_mismatch' });
+      if (db.blocked[sg.number]) { delete db.signups[code]; save(); return send(res, 200, { ok: false, error: 'banned' }); }
       return send(res, 200, { ok: true, number: sg.number, hash: sg.hash });
     }
 
@@ -587,6 +628,7 @@ async function route(req, res) {
           a.balanceAfter = Math.floor(Number(r.balance));
           if (a.user && db.balances[a.user]) db.balances[a.user].balance = a.balanceAfter;
         }
+        if (a.type === 'player_reset' && r.ok) delete db.removed[a.user];   // wiped in the bot: they can play and appear again from zero
         if (a.transferId) transferLeg(a, !!r.ok, r);
         if (a.game) gameAcked(a, !!r.ok, r);
       }
@@ -600,8 +642,9 @@ async function route(req, res) {
     if (hit('pub', ip, 120, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
     if (!PUBLIC_BOARD) return send(res, 200, { ok: true, hidden: true, top: [] });
     const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit'), 10) || 50));
-    const top = Object.values(db.users)
-      .map(u => ({ name: u.name, level: u.level, job: u.job, total: total(u) }))
+    const top = Object.entries(db.users)
+      .filter(([id]) => !hiddenId(id))
+      .map(([, u]) => ({ name: u.name, level: u.level, job: u.job, total: total(u) }))
       .filter(u => u.total > 0)
       .sort((a, b) => b.total - a.total)
       .slice(0, limit)
@@ -611,7 +654,7 @@ async function route(req, res) {
 
   if (req.method === 'GET' && p === '/api/public/stats') {
     if (hit('pub', ip, 120, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
-    const us = Object.values(db.users);
+    const us = Object.entries(db.users).filter(([id]) => !hiddenId(id)).map(([, u]) => u);
     return send(res, 200, {
       ok: true, siteName: SITE_NAME, players: us.length,
       totalMoney: us.reduce((s, u) => s + total(u), 0), updatedAt: db.usersUpdatedAt
@@ -683,7 +726,8 @@ async function route(req, res) {
       await new Promise(r => setTimeout(r, 400));
       return send(res, 401, { ok: false, error: 'wrong_login' });
     }
-    if (acc.banned) return send(res, 403, { ok: false, error: 'banned' });
+    if (acc.banned || db.blocked[key]) return send(res, 403, { ok: false, error: 'banned' });
+    if (db.frozen[key]) return send(res, 403, { ok: false, error: 'frozen' });   // right password, but frozen: they must message customer care
     db.logins[key] = Date.now();
     const sid = crypto.randomBytes(24).toString('base64url');
     usessions.set(sid, { user: key, exp: Date.now() + 12 * 3600000 });
@@ -699,6 +743,7 @@ async function route(req, res) {
     if (key.length < 10) return send(res, 400, { ok: false, error: 'bad_number' });
     if (pw.length < 6 || pw.length > 40 || /\s/.test(pw)) return send(res, 400, { ok: false, error: 'bad_password' });
     if (hit('usignumber', key, 4, 3600000)) return send(res, 429, { ok: false, error: 'too_many_attempts' });
+    if (db.blocked[key]) return send(res, 403, { ok: false, error: 'banned' });     // banned number: no new account, ever
     if (db.accounts[key]) return send(res, 409, { ok: false, error: 'exists' });
     if (Object.keys(db.signups).length > 5000) return send(res, 503, { ok: false, error: 'busy' });
     for (const [c, sg] of Object.entries(db.signups)) if (sg.number === key) delete db.signups[c];   // newest request wins
@@ -712,7 +757,7 @@ async function route(req, res) {
     if (hit('pub', ip, 240, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
     const us = getSession(req, 'usid', usessions);
     let acc = us ? db.accounts[us.user] : null;
-    if (acc && acc.banned) acc = null;
+    if (!accountOk(acc)) acc = null;
     if (us && (!acc)) { usessions.delete(us.sid); }
     if (req.method !== 'GET' && req.headers['x-requested-with'] !== 'XMLHttpRequest')
       return send(res, 403, { ok: false, error: 'bad_request' });
@@ -917,7 +962,8 @@ async function route(req, res) {
         couponValueLeft: cs.reduce((s, c) => s + c.amount * Math.max(0, c.maxClaims - c.claims), 0),
         pendingEdits: db.adjustments.filter(OPEN).length + db.jobs.filter(a => OPEN(a) && a.type !== 'buy').length + db.gameAdj.filter(OPEN).length,
         accounts: Object.keys(db.accounts).length,
-        bannedAccounts: Object.values(db.accounts).filter(a => a.banned).length,
+        bannedAccounts: Object.keys(db.blocked).length,
+        frozenAccounts: Object.keys(db.frozen).length,
         ordersToday: db.jobs.filter(a => a.type === 'buy' && a.status === 'done' && a.doneAt > Date.now() - 86400000).length,
         marketUpdatedAt: db.market.updatedAt,
         usersUpdatedAt: db.usersUpdatedAt
@@ -929,13 +975,20 @@ async function route(req, res) {
       const page = Math.max(1, parseInt(url.searchParams.get('page'), 10) || 1);
       const per = 25;
       let list = Object.entries(db.users).map(([id, u]) => Object.assign({ id, total: total(u) }, u));
-      if (q) list = list.filter(u => u.name.toLowerCase().includes(q));
+      if (q) list = list.filter(u => u.name.toLowerCase().includes(q) || numberFor(u.id).includes(q.replace(/\D/g, '') || '\u0000'));
       list.sort((a, b) => b.total - a.total);
       const pages = Math.max(1, Math.ceil(list.length / per));
       const pg = Math.min(page, pages);
       const pendingIds = new Set(db.adjustments.filter(a => a.status === 'pending' || a.status === 'sent').map(a => a.user));
-      const rows = list.slice((pg - 1) * per, pg * per).map(u => Object.assign({}, u, { pending: pendingIds.has(u.id) }));
-      return send(res, 200, { ok: true, users: rows, count: list.length, page: pg, pages, updatedAt: db.usersUpdatedAt });
+      const rows = list.slice((pg - 1) * per, pg * per).map(u => {
+        const number = numberFor(u.id), acc = accOfId(u.id);
+        return Object.assign({}, u, { pending: pendingIds.has(u.id), number, hasAccount: !!acc, banned: !!db.blocked[number], frozen: !!db.frozen[number] });
+      });
+      const removed = Object.entries(db.removed).map(([id, r]) => {
+        const j = db.jobs.find(x => x.id === r.job);
+        return { id, name: r.name, number: r.number, at: r.at, by: r.by, state: !j ? 'unknown' : j.status === 'done' ? 'done' : OPEN(j) ? 'waiting' : 'failed', error: j && j.error || '' };
+      }).sort((a, b) => b.at - a.at);
+      return send(res, 200, { ok: true, users: rows, count: list.length, page: pg, pages, updatedAt: db.usersUpdatedAt, removed });
     }
 
     if (p === '/admin/api/adjust' && req.method === 'POST') {
@@ -1136,24 +1189,67 @@ async function route(req, res) {
       return send(res, 200, { ok: true });
     }
 
+    // ── players: remove (start fresh) / ban / freeze ──
+    if (p.startsWith('/admin/api/players/') && req.method === 'POST') {
+      const b = await readBody(req);
+      const id = String(b.id || '').slice(0, 100);
+      if (p === '/admin/api/players/restore') {                      // changed my mind: show them again
+        const r = db.removed[id]; if (!r) return send(res, 404, { ok: false, error: 'not_found' });
+        const j = db.jobs.find(x => x.id === r.job); if (j && OPEN(j)) j.status = 'cancelled';
+        delete db.removed[id]; addAudit(me, 'player_restore', `${r.name} (${r.number})`); save();
+        return send(res, 200, { ok: true });
+      }
+      const u = db.users[id], name = (u && u.name) || (db.balances[id] && db.balances[id].name) || (accOfId(id) || {}).name || 'Player';
+      if (!id || (!u && !accOfId(id) && !db.balances[id])) return send(res, 404, { ok: false, error: 'player_not_found' });
+      const number = numberFor(id);
+      if (number.length < 7) return send(res, 400, { ok: false, error: 'no_number' });
+      if (p === '/admin/api/players/remove') {
+        removePlayer(id, name, me);
+        addAudit(me, 'player_remove', `${name} (${number}) — account deleted, off the leaderboard, fresh start`);
+      } else if (p === '/admin/api/players/ban') {
+        const banned = !!b.banned;
+        banNumber(number, banned, id, name, me);
+        addAudit(me, banned ? 'player_ban' : 'player_unban', `${name} (${number})`);
+      } else if (p === '/admin/api/players/freeze') {
+        const frozen = !!b.frozen;
+        freezeNumber(number, frozen, name, me);
+        addAudit(me, frozen ? 'player_freeze' : 'player_unfreeze', `${name} (${number})`);
+      } else return send(res, 404, { ok: false, error: 'not_found' });
+      save();
+      return send(res, 200, { ok: true });
+    }
+
     if (p === '/admin/api/accounts' && req.method === 'GET') {
       const q = String(url.searchParams.get('q') || '').toLowerCase().trim();
       const open = db.jobs.filter(a => OPEN(a) && String(a.type).startsWith('acct_'));
       let list = Object.values(db.accounts).map(a => {
         const b = db.balances[a.jid] || {};
-        return { number: a.number, name: (b.name || a.name || 'Player'), banned: !!a.banned, balance: b.balance || 0, bank: b.bank || 0,
+        return { number: a.number, name: (b.name || a.name || 'Player'), banned: !!a.banned || !!db.blocked[a.number], frozen: !!db.frozen[a.number], balance: b.balance || 0, bank: b.bank || 0,
                  lastLogin: db.logins[a.number] || 0, pending: open.some(x => x.user === a.jid) };
       });
+      for (const [n, bl] of Object.entries(db.blocked)) if (!db.accounts[n]) list.push({ number: n, name: bl.name || 'Player', banned: true, frozen: false, noAccount: true, balance: 0, bank: 0, lastLogin: 0, pending: false });
       if (q) list = list.filter(a => a.number.includes(q.replace(/\D/g, '') || '\u0000') || a.name.toLowerCase().includes(q));
       list.sort((a, b) => a.name.localeCompare(b.name));
       const waiting = Object.values(db.signups).filter(x => Date.now() - x.createdAt < SIGNUP_TTL).length;
-      return send(res, 200, { ok: true, items: list.slice(0, 500), total: Object.keys(db.accounts).length, banned: list.filter(a => a.banned).length, waiting });
+      return send(res, 200, { ok: true, items: list.slice(0, 500), total: Object.keys(db.accounts).length, banned: list.filter(a => a.banned).length, frozen: list.filter(a => a.frozen).length, waiting });
     }
 
     if (p.startsWith('/admin/api/accounts/') && req.method === 'POST') {
       const b = await readBody(req);
       const key = last10(b.number);
       const acc = db.accounts[key];
+      if (p === '/admin/api/accounts/ban' && (acc || db.blocked[key])) {
+        const banned = !!b.banned;
+        banNumber(key, banned, acc && acc.jid, acc ? acc.name : (db.blocked[key] || {}).name, me);
+        addAudit(me, banned ? 'account_ban' : 'account_unban', `${(acc || db.blocked[key] || {}).name} (${key})`);
+        save(); return send(res, 200, { ok: true });
+      }
+      if (p === '/admin/api/accounts/freeze' && acc) {
+        const frozen = !!b.frozen;
+        freezeNumber(key, frozen, acc.name, me);
+        addAudit(me, frozen ? 'account_freeze' : 'account_unfreeze', `${acc.name} (${key})`);
+        save(); return send(res, 200, { ok: true });
+      }
       if (!acc) return send(res, 404, { ok: false, error: 'account_not_found' });
       if (p === '/admin/api/accounts/password') {
         const pw = String(b.password || '');
@@ -1293,7 +1389,7 @@ const aviator = require('./aviator-engine')({
   getAcc: (req) => {
     const us = getSession(req, 'usid', usessions);
     const acc = us ? db.accounts[us.user] : null;
-    return acc && !acc.banned ? acc : null;
+    return accountOk(acc) ? acc : null;
   },
   // (the crash plane also sees what is staked in football, so one coin cannot be bet twice)
   getWallet: (acc) => { const w = walletFor(acc); if (w) w.balance -= football.hold(acc.number) + slots.hold(acc.number); return w; },
@@ -1307,7 +1403,7 @@ const football = require('./football-engine')({
   getAcc: (req) => {
     const us = getSession(req, 'usid', usessions);
     const acc = us ? db.accounts[us.user] : null;
-    return acc && !acc.banned ? acc : null;
+    return accountOk(acc) ? acc : null;
   },
   getWallet: (acc) => { const w = walletFor(acc); if (w) w.balance -= aviator.hold(acc.number) + slots.hold(acc.number); return w; },
   queueAdj: queueGameAdj,
@@ -1320,7 +1416,7 @@ const slots = require('./slots-engine')({
   getAcc: (req) => {
     const us = getSession(req, 'usid', usessions);
     const acc = us ? db.accounts[us.user] : null;
-    return acc && !acc.banned ? acc : null;
+    return accountOk(acc) ? acc : null;
   },
   getWallet: (acc) => { const w = walletFor(acc); if (w) w.balance -= aviator.hold(acc.number) + football.hold(acc.number); return w; },
   queueAdj: queueGameAdj,
