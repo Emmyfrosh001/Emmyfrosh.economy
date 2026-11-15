@@ -689,17 +689,31 @@ module.exports = function createFootball(opts) {
   const FREE_LEAGUES = String(process.env.FREE_LEAGUES || '').split(',').map(x => x.trim()).filter(x => /^[a-z0-9_.]+$/i.test(x)), FREE_LG = FREE_LEAGUES.length ? FREE_LEAGUES : Object.keys(ESPN_LG);
   const FREE_REFRESH = Math.max(5, Number(process.env.FREE_REFRESH_MIN) || 30) * 60000, FREE_LIVE_MS = Math.max(30, Number(process.env.FREE_LIVE_SEC) || 60) * 1000;
   const ymd = (t) => new Date(t).toISOString().slice(0, 10).replace(/-/g, '');
-  async function espnRaw(slug, from, to) {                                                  // → { status, events }  (from/to omitted = ESPN's own "current / next matchday")
-    const r = await fetch(ESPN + encodeURIComponent(slug) + '/scoreboard' + (from ? '?limit=300&dates=' + ymd(from) + '-' + ymd(to) : ''), { signal: AbortSignal.timeout(20000), headers: { accept: 'application/json' } });
+  async function espnRaw(slug, dates) {                                                    // → { status, events }   dates: 'YYYYMMDD' or 'YYYYMMDD-YYYYMMDD'; none = ESPN's own current / next matchday
+    const r = await fetch(ESPN + encodeURIComponent(slug) + '/scoreboard' + (dates ? '?dates=' + dates : ''), { signal: AbortSignal.timeout(20000), headers: { accept: 'application/json' } });
     if (r.status === 404 || r.status === 400) return { status: r.status, events: [] };
     if (!r.ok) throw new Error('espn ' + r.status);
     const j = await r.json().catch(() => ({}));
     return { status: 200, events: Array.isArray(j.events) ? j.events : [] };
   }
-  async function espnGet(slug, from, to) {                                                  // dated range first; if that is empty, ESPN's default scoreboard (its current / next matchday)
-    const a = await espnRaw(slug, from, to);
-    if (a.events.length || a.status !== 200) return a;
-    return espnRaw(slug).catch(() => a);
+  // One league, several days. ESPN rejects some date ranges with HTTP 400, so: try a range once; if that is refused (but the league itself is fine) switch for good to one request per day.
+  let rangeOK = null;
+  async function espnLeague(slug, days) {                                                  // days: sorted ['YYYYMMDD', ...] → { status, events }
+    const seen = new Map(), add = (r) => r.events.forEach(e => e && e.id && seen.set(String(e.id), e));
+    let done = false;
+    if (rangeOK !== false && days.length > 1) {
+      const a = await espnRaw(slug, days[0] + '-' + days[days.length - 1]);
+      if (a.status === 200) { rangeOK = true; add(a); done = true; }
+      else if (a.status === 400) { const b = await espnRaw(slug); if (b.status !== 200) return b; rangeOK = false; }       // the league is fine, the range is not
+      else return a;
+    }
+    if (!done) {
+      let ok = 0, bad = 0, err = null;
+      for (const d of days) { try { const r = await espnRaw(slug, d); if (r.status === 200) { ok++; add(r); } else bad++; } catch (x) { err = x; } }
+      if (!ok) { if (err) throw err; return { status: bad ? 404 : 200, events: [] }; }
+    }
+    if (!seen.size) { try { add(await espnRaw(slug)); } catch (x) { } }                    // nothing in the window: also take ESPN's current / next matchday
+    return { status: 200, events: [...seen.values()] };
   }
   // strength of a team (1.0 weak .. ~1.95 elite): the club ratings above when the name matches, else the league record (W-D-L), else average
   const KNOWN_T = LG.flatMap(([, ts]) => ts);
@@ -763,10 +777,15 @@ module.exports = function createFootball(opts) {
       const now = Date.now(), diag = {}; let errs = [], fresh = 0;
       const act = new Set(Object.values(real.events).filter(ev => ev.free && ev.status === 'open' && now >= ev.t - 5 * 60000 && now < ev.t + VOID_MS).map(ev => ev.lg));
       const lgs = full ? FREE_LG : FREE_LG.filter(x => act.has(x)); if (!lgs.length && !full) { settleBets(); return; }
-      const from = now - 2 * 86400000, to = now + DAYS * 86400000;
+      const dayList = (lg) => {                                                            // UTC days to ask for: today.. (full) + the days of games that are open and started
+        const set = new Set();
+        if (full) for (let i = -1; i < DAYS; i++) set.add(ymd(now + i * 86400000));
+        for (const ev of Object.values(real.events)) if (ev.free && ev.lg === lg && ev.status === 'open' && now >= ev.t - 5 * 60000 && now < ev.t + VOID_MS) { set.add(ymd(ev.t)); set.add(ymd(ev.t - 6 * 3600000)); set.add(ymd(ev.t + 3 * 3600000)); }
+        return [...set].sort();
+      };
       for (let i = 0; i < lgs.length; i += 6) await Promise.all(lgs.slice(i, i + 6).map(async (lg) => {
         try {
-          const got = await espnGet(lg, from, to); let n = 0;
+          const got = await espnLeague(lg, dayList(lg)); let n = 0;
           for (const e of got.events) { try { fresh += applyFree(lg, e); if (e && e.status && e.status.type && e.status.type.state === 'pre') n++; } catch (x) { } }
           if (full) diag[lg] = { n, err: got.status !== 200 ? 'ESPN does not know the league code "' + lg + '"' : '', raw: got.events.length, at: now };
         } catch (x) { const m = String(x.message || x).slice(0, 100); errs.push(m); if (full) diag[lg] = { n: 0, err: m, at: now }; }
@@ -1004,11 +1023,13 @@ module.exports = function createFootball(opts) {
       if (hit('fbd', clientIp(req), 20, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
       const lg = String(new URL(req.url, 'http://x').searchParams.get('lg') || 'uefa.nations').replace(/[^a-z0-9_.]/gi, '').slice(0, 40), out = { ok: true, lg, source: FREE ? 'free' : 'odds', now: new Date().toISOString() };
       const brief = (e) => ({ id: e.id, date: e.date, name: e.name, state: e.status && e.status.type && e.status.type.state, type: e.status && e.status.type && e.status.type.name });
-      try { const a = await espnRaw(lg, Date.now() - 86400000, Date.now() + DAYS * 86400000); out.range = { status: a.status, count: a.events.length, first: a.events.slice(0, 6).map(brief) }; } catch (x) { out.range = { error: String(x.message || x) }; }
-      try { const b = await espnRaw(lg); out.plain = { status: b.status, count: b.events.length, first: b.events.slice(0, 6).map(brief) }; } catch (x) { out.plain = { error: String(x.message || x) }; }
+      const t0 = Date.now(), d0 = ymd(t0), d1 = ymd(t0 + 7 * 86400000);
+      for (const [k, dt] of [['range', d0 + '-' + d1], ['today', d0], ['tomorrow', ymd(t0 + 86400000)], ['plain', '']]) {
+        try { const r = await espnRaw(lg, dt); out[k] = { status: r.status, count: r.events.length, first: r.events.slice(0, 6).map(brief) }; } catch (x) { out[k] = { error: String(x.message || x) }; }
+      }
       out.listed = Object.values(real.events).filter(e => e.lg === lg).length;
       const part = (t, x) => [t + ': ' + (x.error ? 'ERROR ' + x.error : 'HTTP ' + x.status + ' · ' + x.count + ' games')].concat((x.first || []).map(e => '   - ' + [e.name || e.id, e.date, e.state].join(' | '))).join('\n');
-      const txt = ['League code: ' + lg, 'Source: ' + out.source, 'Server time: ' + out.now, '', part('Next 7 days', out.range), '', part('ESPN current / next matchday', out.plain), '', 'Games from this league in our list: ' + out.listed].join('\n');
+      const txt = ['League code: ' + lg, 'Source: ' + out.source, 'Server time: ' + out.now, 'Mode: ' + (rangeOK === null ? 'not decided yet' : rangeOK ? 'date range' : 'one request per day'), '', part('7-day range', out.range), '', part('Today (' + d0 + ')', out.today), '', part('Tomorrow', out.tomorrow), '', part('Plain (current / next matchday)', out.plain), '', 'Games from this league in our list: ' + out.listed].join('\n');
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
       return res.end('<meta name=viewport content="width=device-width,initial-scale=1"><body style="background:#000;color:#eee;font:16px/1.5 monospace;padding:16px"><pre style="white-space:pre-wrap;word-break:break-word">' + txt.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</pre>');
     }
