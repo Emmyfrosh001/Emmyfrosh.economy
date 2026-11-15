@@ -16,6 +16,7 @@ const ERR = {
   below_min: 'That stake is below the minimum.', above_max: 'That stake is above the maximum.',
   rate_limited: 'Slow down a little and try again.', bad_request: 'Something went wrong. Refresh the page.',
   real_off: 'Real football betting is not switched on yet.',
+  live_off: 'Live betting is switched off right now.', live_wait: 'Odds for this live game are updating. Try again in a moment.',
   locked_leg: 'A game that has already started cannot be changed or removed.', not_editable: 'This ticket can no longer be edited.', no_ticket: 'Ticket not found. Refresh the page.'
 };
 function errText(code) {
@@ -141,12 +142,29 @@ function renderTop() {
   const src = S || R, logged = !!src && src.balance !== null, bal = S && S.balance !== null ? S.balance : (R ? R.balance : null);
   $('balChip').hidden = !logged; if (logged) $('bal').textContent = fmt(bal);
   $('hdLogin').hidden = logged; $('hdSignup').hidden = logged;
-  $('loginNote').hidden = logged || !src; $('closedNote').hidden = !S || S.enabled;
+  $('loginNote').hidden = logged || !src; $('closedNote').hidden = true;
+  const lv = !!S && !S.enabled, lr = !!R && !!R.locked;                // the owner closed a room: show a lock instead of the games
+  $('lockV').hidden = !lv; $('panelV').classList.toggle('locked', lv); $('lockR').hidden = !lr; $('panelR').classList.toggle('locked', lr);
 }
 const lum = (hex) => { const n = parseInt(hex.slice(1), 16); return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255; };
-const crest = (t) => { const c = el('span', 'crest', t.c.slice(0, 1)); c.style.background = t.col; c.style.color = lum(t.col) > .6 ? '#111' : '#fff'; return c; };
+const LOGOS = {};                                                    // club name → logo image (the server looks them up once and keeps them)
+const plainCrest = (t) => { const c = el('span', 'crest', t.c.slice(0, 1)); c.style.background = t.col; c.style.color = lum(t.col) > .6 ? '#111' : '#fff'; return c; };
+const crest = (t) => {
+  const u = LOGOS[t.n]; if (!u) return plainCrest(t);
+  const w = el('span', 'crest logo'), im = new Image(); im.alt = ''; im.decoding = 'async'; im.src = u;
+  im.onerror = () => { delete LOGOS[t.n]; if (w.isConnected) w.replaceWith(plainCrest(t)); };       // a broken link falls back to the coloured crest
+  w.append(im); return w;
+};
+async function loadLogos() {
+  try {
+    const r = await fetch('/football/logos', { cache: 'no-store' }), j = await r.json(); if (!r.ok || !j.ok) return;
+    const before = Object.keys(LOGOS).length; let changed = false;
+    Object.entries(j.logos).forEach(([n, u]) => { if (LOGOS[n] !== u) { LOGOS[n] = u; changed = true; } });
+    if (changed || before !== Object.keys(LOGOS).length) { renderList(); renderReal(); buildLive(); }
+  } catch {}
+}
 const stars = (n) => { const s = el('span', 'stars'); for (let i = 0; i < 5; i++) s.append(el('i', i < n ? 'on' : '', '★')); return s; };
-const teamBox = (t, away) => { const b = el('div', 'tm' + (away ? ' aw' : '')), nm = el('div', 'tm-n'); nm.append(el('b', '', t.c)); if (t.st) b.append(stars(t.st)); b.prepend(nm); away ? nm.append(crest(t)) : nm.prepend(crest(t)); return b; };
+const teamLine = (t, goals) => { const r = el('div', 'tl'); r.append(crest(t), el('span', 'tn', t.n)); if (t.st) r.append(stars(t.st)); if (goals !== undefined && goals !== null) r.append(el('b', 'sg', String(goals))); return r; };
 
 function cell(it, store, dis, redraw, k, i, label) {
   const o = it.o[k], b = el('button', 'cell'); b.type = 'button';
@@ -175,7 +193,7 @@ function csSelect(it, redraw) {                      // pick which score to show
 function matchRow(it, ui, store, dis, redraw) {
   const m = MKTS.find(x => x.id === ui.mk) || MKTS[0], row = el('div', 'sp-row');
   const main = el('div', 'sp-main'), teams = el('div', 'sp-teams');
-  teams.append(teamBox(it.h, false), it.sc ? el('span', 'vs sc' + (it.fin ? ' fin' : ' live'), it.sc[0] + ' - ' + it.sc[1]) : el('span', 'vs', 'vs'), teamBox(it.a, true));
+  teams.append(teamLine(it.h, it.sc ? it.sc[0] : null), teamLine(it.a, it.sc ? it.sc[1] : null));
   const odds = el('div', 'sp-odds');
   if (m.id === 'cs') { const [sel, pick] = csSelect(it, redraw), c = cell(it, store, dis, redraw, 'cs', pick, 'Correct score'); c.style.gridColumn = 'span 2'; odds.append(sel, c); }
   else if (m.k) { if (m.cols.length === 2) odds.append(el('span')); m.cols.forEach((c, i) => odds.append(cell(it, store, dis, redraw, m.k, i, c))); }
@@ -189,7 +207,12 @@ function matchRow(it, ui, store, dis, redraw) {
   const foot = el('div', 'sp-foot'), n = Object.values(it.o).reduce((s, a) => s + a.filter(v => v != null).length, 0) - (m.id === 'cs' ? 1 : m.cols.length);
   const more = el('button', 'more', (openMore.has(it.id) ? '− ' : '+') + n + (openMore.has(it.id) ? '' : '  ›')); more.type = 'button';
   more.onclick = () => { openMore.has(it.id) ? openMore.delete(it.id) : openMore.add(it.id); redraw(); };
-  foot.append(more, el('span', 'st', it.meta || ''));
+  foot.append(more, el('span', 'st' + (it.live ? ' live' : ''), it.meta || ''));
+  if (it.real) {                                                       // the chart icon: head-to-head + live statistics
+    const ib = el('button', 'info'); ib.type = 'button'; ib.setAttribute('aria-label', 'Match info: head to head and statistics');
+    ib.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M3 3v18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M7 15l4-5 3 3 5-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    ib.onclick = () => openInfo(it); foot.append(ib);
+  }
   row.append(main, foot);
   if (openMore.has(it.id)) {
     const box = el('div', 'sp-more'), order = ['x', 'u1', 'u2', 'dc', 'dnb', 'gg', ...keysOf(it.o, 'o'), ...keysOf(it.o, 'h'), ...keysOf(it.o, 'a'), 'cs'];
@@ -270,7 +293,7 @@ function paint() {
 }
 let lastDis = null;
 function renderBtn() {
-  const n = slipCount(), on = tab === 'v' || tab === 'r';
+  const n = slipCount(), on = (tab === 'v' && !!S && S.enabled) || (tab === 'r' && !!R && !R.locked);
   $('open').textContent = 'Betslip' + (n ? ' (' + n + ') · ' + total().toFixed(2) : '');
   $('open').disabled = !n || !on;
 }
@@ -282,9 +305,12 @@ const sameDay = (a, b) => new Date(a).toDateString() === new Date(b).toDateStrin
 const dayWord = (t) => sameDay(t, Date.now()) ? 'Today' : sameDay(t, Date.now() + 86400000) ? 'Tomorrow' : new Date(t).toLocaleDateString([], { weekday: 'long' });
 const dayLabel = (t) => dayWord(t) + ' · ' + new Date(t).toLocaleDateString([], { day: 'numeric', month: 'short' });     // Today · 14 Nov / Monday · 16 Nov
 const until = (ms) => { const m = Math.max(0, Math.round(ms / 60000)); return m < 60 ? m + 'm' : m < 1440 ? Math.floor(m / 60) + 'h ' + String(m % 60).padStart(2, '0') + 'm' : Math.floor(m / 1440) + 'd ' + Math.floor(m % 1440 / 60) + 'h'; };
+const ckText = (ck) => !ck ? '' : ck.ph === 'HT' ? 'HT' : ck.ph === 'FT' ? 'FT' : ck.ph === 'ET' ? 'Extra time' : ck.min + (ck.plus ? '+' + ck.plus : '') + "'";
+const leftText = (ck) => !ck || (ck.ph !== '1H' && ck.ph !== '2H') ? (ck && ck.ph === 'HT' ? 'half-time' : '') : ck.left > 0 ? (ck.est ? '~' : '') + ck.left + ' min left' : 'added time';
 const rTeam = (n) => ({ n, c: n.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase(), col: '#64748b', st: 0 });
 function renderReal() {
   const box = $('rlist'), note = $('rnote'), info = $('rinfo'); if (!R) return;
+  if (R.locked) { box.replaceChildren(); return; }
   const now = Date.now() + roff, ui = UI.r, tabs = $('lgTabsR'), dtabs = $('dayTabsR');
   if (R.setup || !R.on) {
     note.hidden = false; info.hidden = true; box.replaceChildren(); $('mkTabsR').replaceChildren(); tabs.replaceChildren(); dtabs.replaceChildren();
@@ -292,9 +318,10 @@ function renderReal() {
     return;
   }
   note.hidden = true; box.replaceChildren();
-  const all = R.events.map(ev => { const shut = ev.closed || now > ev.t - 60000;
-    return { id: ev.id, t: ev.t, lgn: ev.lg, h: rTeam(ev.h), a: rTeam(ev.a), o: ev.o, closed: shut, sc: ev.sc || null, fin: !!ev.fin,
-      meta: ev.lg + ' · ' + fmtClock(ev.t) + ' · ' + (ev.fin ? 'Full time' : now >= ev.t ? (ev.sc ? '● LIVE' : 'Started') : shut ? 'Closing' : 'in ' + until(ev.t - now)) }; }).sort((a, b) => a.t - b.t);
+  const all = R.events.map(ev => { const shut = !!ev.closed;                // the server decides: before kick-off, or live with fresh odds
+    const started = now >= ev.t && !ev.fin, ck = ev.ck, why = ev.why === 'live_wait' ? ' · updating odds…' : ev.why === 'live_off' ? ' · live betting off' : '';
+    return { id: ev.id, real: true, live: started, t: ev.t, lgn: ev.lg, h: rTeam(ev.h), a: rTeam(ev.a), o: ev.o, closed: shut, sc: ev.sc || null, fin: !!ev.fin,
+      meta: ev.lg + ' · ' + fmtClock(ev.t) + ' · ' + (ev.fin ? 'Full time' : started ? '● LIVE ' + [ckText(ck), leftText(ck)].filter(Boolean).join(' · ') + why : shut ? 'Closing' : 'in ' + until(ev.t - now)) }; }).sort((a, b) => a.t - b.t);
   info.hidden = false;
   info.textContent = 'Today and the next 6 days. Kick-off times are in your time (' + (Intl.DateTimeFormat().resolvedOptions().timeZone || 'local') + ').' + (R.updated ? ' Odds updated ' + fmtClock(R.updated) + '.' : '');
   // day tabs (Today · Tomorrow · Mon 16 …) and league tabs
@@ -328,6 +355,16 @@ function renderReal() {
 }
 
 // ── booking codes: share a slip, load someone else's ─────────
+async function shareCode(code, btn) {
+  const link = location.origin + '/football#code=' + code;
+  if (navigator.share) { try { await navigator.share({ title: 'Booking code ' + code, text: 'Booking code ' + code + ' — open it here: ' + link, url: link }); return; } catch (e) { if (e && e.name === 'AbortError') return; } }
+  copyText(link, btn, 'Link copied ✓');
+}
+function codeButtons(code) {                                           // Copy code · Copy link · Share
+  const link = location.origin + '/football#code=' + code, a = el('button', 'btn-n small', 'Copy code'), b = el('button', 'btn-n small ghost-n', 'Copy link'), c = el('button', 'btn-n small ghost-n', 'Share');
+  a.type = b.type = c.type = 'button'; a.onclick = () => copyText(code, a); b.onclick = () => copyText(link, b); c.onclick = () => shareCode(code, c);
+  return [a, b, c];
+}
 const CODE_ST = { open: ['won', 'Added to slip'], closed: ['pend', 'Closing'], live: ['live', 'Live / started'], ended: ['pend', 'Started'], done: ['pend', 'Finished'], void: ['pend', 'Void'], nomarket: ['lost', 'No odds now'] };
 function showCode(c) {
   const box = $('codeBox'); box.replaceChildren(); box.hidden = false;
@@ -344,8 +381,34 @@ function showCode(c) {
     box.append(d);
   });
 }
+function showVCode(c) {
+  const box = $('codeBoxV'); box.replaceChildren(); box.hidden = false;
+  const added = c.legs.filter(l => l.odd != null).length, h = el('div', 'cb-h'), x = el('button', 'cb-x', '×'); x.type = 'button'; x.onclick = () => { box.hidden = true; };
+  h.append(el('b', '', 'Booking code ' + c.code + ' · Round ' + c.round + ' · ' + c.legs.length + ' game' + (c.legs.length > 1 ? 's' : '')), x); box.append(h);
+  box.append(el('p', 's-muted small', c.status === 'open' ? (added === c.legs.length ? 'All games are on your betslip. Place the bet before the round kicks off.' : added + ' of ' + c.legs.length + ' games are on your betslip. The others are locked.')
+    : c.status === 'closed' ? 'Betting for this round has just closed.' : 'This code was for Round ' + c.round + ', which has already kicked off. Ask for a new code for the open round.'));
+  c.legs.forEach(l => {
+    const d = el('div', 'tk-leg'), a = el('div', 'tk-l1'), b = el('div', 'tk-l2');
+    a.append(el('b', '', l.h + ' v ' + l.a), el('span', 'tk-st ' + (c.status === 'open' && l.odd != null ? 'won' : 'pend'), c.status === 'open' ? (l.odd != null ? 'Added to slip' : 'Locked') : 'Expired'));
+    b.append(el('span', '', mName(l.k) + ' · ' + pName(l.k, l.i)), el('b', '', c.status === 'open' && l.odd != null ? '@ ' + Number(l.odd).toFixed(2) : ''));
+    d.append(a, b, el('div', 'tk-l3', (l.lg || '') + ' · Round ' + c.round)); box.append(d);
+  });
+}
+async function loadVCode(code) {
+  try {
+    const r = await fetch('/football/code/' + encodeURIComponent(code), { credentials: 'same-origin', cache: 'no-store' }), j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) return toast(j.error === 'rate_limited' ? ERR.rate_limited : 'Booking code not found. Check it and try again.', true);
+    setTab('v'); await load();
+    if (j.status === 'open' && NX && NX.id === j.round) {
+      picks = {}; j.legs.forEach(l => { if (l.odd != null) picks[l.m] = { k: l.k, i: l.i, odd: l.odd }; });
+      if (j.legs.length && S) { UI.v.lg = Math.floor(j.legs[0].m / S.per); watched = UI.v.lg * S.per; buildLive(); }
+    }
+    showVCode(j); renderList(); renderBtn(); $('codeBoxV').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch { toast('No connection. Try again.', true); }
+}
 async function loadCode(code) {
   code = String(code || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, ''); if (code.length < 4) return;
+  if (code.length === 7) return loadVCode(code);                       // virtual codes have 7 characters, real-match codes 6
   for (let i = 0; i < 30 && (!R || rLoading); i++) { if (!R && !rLoading) loadReal(); await new Promise(r => setTimeout(r, 100)); }
   try {
     const r = await fetch('/football/real/code/' + encodeURIComponent(code), { credentials: 'same-origin', cache: 'no-store' }), j = await r.json().catch(() => ({}));
@@ -357,18 +420,16 @@ async function loadCode(code) {
   } catch { toast('No connection. Try again.', true); }
 }
 $('codeForm').onsubmit = (e) => { e.preventDefault(); loadCode($('codeIn').value); };
+$('codeFormV').onsubmit = (e) => { e.preventDefault(); loadCode($('codeInV').value); };
 $('mkCode').onclick = async () => {
-  const p = rpicks, out = $('codeOut'); if (!Object.keys(p).length) return;
+  const real = slipMode === 'r', p = cur(), out = $('codeOut'); if (!Object.keys(p).length) return;
   try {
-    const r = await fetch('/football/real/code', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-      body: JSON.stringify({ picks: Object.keys(p).map(e => ({ e, k: p[e].k, i: p[e].i })) }) });
+    const body = real ? { picks: Object.keys(p).map(e => ({ e, k: p[e].k, i: p[e].i })) } : { round: S.nextId, picks: Object.keys(p).map(m => ({ m: +m, k: p[m].k, i: p[m].i })) };
+    const r = await fetch(real ? '/football/real/code' : '/football/code', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok || j.ok === false) { $('msg').textContent = errText(j.error); return; }
-    const link = location.origin + '/football#code=' + j.code;
     out.replaceChildren(); out.hidden = false;
-    const c1 = el('button', 'btn-n small', 'Copy code'), c2 = el('button', 'btn-n small ghost-n', 'Copy link'); c1.type = c2.type = 'button';
-    c1.onclick = () => copyText(j.code, c1); c2.onclick = () => copyText(link, c2);
-    out.append(el('span', 's-muted', 'Booking code'), el('b', '', j.code), c1, c2);
+    out.append(el('span', 's-muted', 'Booking code'), el('b', '', j.code), ...codeButtons(j.code));
   } catch { $('msg').textContent = 'No connection. Try again.'; }
 };
 
@@ -402,10 +463,8 @@ function openTicket(t, real) {
   const box = $('tkBody'), L = legs(t, real), st = tStatus(t, real); box.replaceChildren();
   $('tkTitle').textContent = 'Ticket #' + String(t.id || '').slice(0, 8).toUpperCase();
   const head = el('div', 'tk-head'); head.append(el('span', 'tk-st ' + st[0], st[1]), el('span', 's-muted', real ? 'Real matches' + (t.edits ? ' · edited ' + t.edits + '×' : '') : 'Virtual · Round ' + t.round)); box.append(head);
-  if (real && t.code) {                                                // booking code of THIS ticket: copy it and send it to a friend
-    const c = el('div', 'tk-code'), link = location.origin + '/football#code=' + t.code, b1 = el('button', 'btn-n small', 'Copy code'), b2 = el('button', 'btn-n small ghost-n', 'Copy link');
-    b1.type = b2.type = 'button'; b1.onclick = () => copyText(t.code, b1); b2.onclick = () => copyText(link, b2);
-    const lab = el('div'); lab.append(el('small', 's-muted', 'Booking code'), el('b', 'cd', t.code)); c.append(lab, b1, b2); box.append(c);
+  if (t.code && (real || t.st === 'open')) {                           // booking code of THIS ticket: copy it and send it to a friend (a virtual code works until its round kicks off)
+    const c = el('div', 'tk-code'), lab = el('div'); lab.append(el('small', 's-muted', 'Booking code' + (real ? '' : ' · Round ' + t.round)), el('b', 'cd', t.code)); c.append(lab, ...codeButtons(t.code)); box.append(c);
   }
   if (!L.length) box.append(el('p', 'empty', 'This old ticket was saved before details were kept. It had ' + (t.n || '?') + ' picks.'));
   L.forEach(l => {
@@ -415,7 +474,7 @@ function openTicket(t, real) {
     const b = el('div', 'tk-l2'); b.append(el('span', '', mName(l.k) + ' · ' + pName(l.k, l.i)), el('b', '', '@ ' + Number(l.odd).toFixed(2)));
     d.append(a, b);
     if (l.score) d.append(el('div', 'tk-l3', 'Final score ' + l.score));
-    else if (real && l.live && started) d.append(el('div', 'tk-l3 live', '● Score now ' + l.live));
+    else if (real && started && (l.live || l.ck)) d.append(el('div', 'tk-l3 live', '● ' + (l.live ? 'Score now ' + l.live : 'In play') + (l.ck ? ' · ' + [ckText(l.ck), leftText(l.ck)].filter(Boolean).join(' · ') : '')));
     else if (real && l.t) d.append(el('div', 'tk-l3', (started ? 'Started ' : 'Kick-off ') + fmtTime(l.t) + (real && t.status === 'open' && !started ? ' · you can still change this game' : (started && t.status === 'open' ? ' · locked' : ''))));
     box.append(d);
   });
@@ -490,6 +549,7 @@ function renderSlip() {
   const ed = editing && (editing.real === (slipMode === 'r')) ? editing : null;
   $('slipTitle').textContent = (ed ? 'Edit ticket #' + String(ed.id).slice(0, 6).toUpperCase() : 'Betslip') + (slipMode === 'r' ? ' · Real matches' : ' · Round ' + (NX ? NX.id : ''));
   $('place').textContent = ed ? 'Save changes' : 'Place bet';
+  $('liveNote').hidden = !(slipMode === 'r' && Object.keys(p).some(e => { const ev = R && R.events.find(x => x.id === e); return ev && Date.now() + roff >= ev.t; }));
   lockedList().forEach(e => {                                         // started games: shown, cannot be removed
     const L = editing.locked[e], row = el('div', 'sel locked'), l = el('div'), r = el('div');
     l.append(el('b', '', L.h + ' v ' + L.a), el('span', '', mName(L.k) + ' · ' + pName(L.k, L.i) + ' · 🔒 started, locked'));
@@ -502,7 +562,7 @@ function renderSlip() {
     rm.onclick = () => { delete p[m]; slipMode === 'r' ? renderReal() : renderList(); renderBtn(); slipCount() ? renderSlip() : $('slip').close(); };
     r.append(el('b', '', p[m].odd.toFixed(2)), document.createElement('br'), rm); row.append(l, r); box.append(row);
   });
-  $('mkCode').hidden = slipMode !== 'r' || !Object.keys(p).length || !!ed;
+  $('mkCode').hidden = !Object.keys(p).length || !!ed;
   $('tot').textContent = total().toFixed(2);
   $('win').textContent = fmt(Math.floor(parseAmt($('stake').value) * total()));
 }
@@ -540,6 +600,58 @@ $('place').onclick = async () => {
   busy = false; $('place').disabled = false;
 };
 
+// ── match info (chart icon): head to head + live statistics ──
+let infoIt = null, infoTab = 'h2h', infoData = null, infoTimer = 0;
+const shortDate = (d) => new Date(d).toLocaleDateString([], { day: '2-digit', month: '2-digit', year: '2-digit' });
+async function openInfo(it) {
+  infoIt = it; infoData = null; infoTab = it.live || it.fin ? 'stats' : 'h2h';
+  $('infoTitle').textContent = it.h.n + ' v ' + it.a.n; $('infoBody').replaceChildren(el('p', 'empty', 'Loading…'));
+  renderInfoTabs(); if (!$('infoDlg').open) $('infoDlg').showModal();
+  await loadInfo(); clearInterval(infoTimer); infoTimer = setInterval(() => { if ($('infoDlg').open) loadInfo(); else clearInterval(infoTimer); }, 15000);
+}
+async function loadInfo() {
+  if (!infoIt) return;
+  try {
+    const r = await fetch('/football/real/info/' + encodeURIComponent(infoIt.id), { credentials: 'same-origin', cache: 'no-store' });
+    infoData = await r.json().catch(() => ({ ok: false })); if (!r.ok) infoData = { ok: false };
+  } catch { infoData = { ok: false }; }
+  renderInfo();
+}
+function renderInfoTabs() {
+  const box = $('infoTabs'); box.replaceChildren();
+  [['stats', 'Live statistics'], ['h2h', 'H2H']].forEach(([k, t]) => { const b = el('button', 'lt', t); b.type = 'button'; b.setAttribute('aria-selected', String(infoTab === k)); b.onclick = () => { infoTab = k; renderInfoTabs(); renderInfo(); }; box.append(b); });
+}
+function renderInfo() {
+  const d = infoData, body = $('infoBody'), head = $('infoHead'); body.replaceChildren(); head.replaceChildren();
+  if (!d) return;
+  const it = infoIt, sc = d.sc || it.sc, ck = d.ck;
+  const top = el('div', 'inf-top');
+  top.append(el('div', 'inf-lg', (d.lg || it.lgn || '') + ' · ' + fmtTime(d.t || it.t)));
+  top.append(el('div', 'inf-clock' + (d.fin ? '' : (sc ? ' live' : '')), d.fin ? 'Full time' : sc ? [ckText(ck), leftText(ck)].filter(Boolean).join(' · ') : 'Starts ' + fmtClock(d.t || it.t)));
+  const row = el('div', 'inf-score'); const tc = (t) => { const x = el('div', 'inf-team'); x.append(crest(t), el('b', '', t.n)); return x; };
+  row.append(tc(it.h), el('span', 'big', sc ? sc[0] + ' : ' + sc[1] : 'vs'), tc(it.a)); top.append(row); head.append(top);
+  if (d.ok === false) { body.append(el('p', 'empty', 'No data available right now.')); return; }
+  if (!d.api) body.append(el('p', 'empty', 'Detailed match info (head to head and live statistics) is not switched on yet.'));
+  else if (infoTab === 'h2h') {
+    if (!d.h2h || !d.h2h.rows.length) return body.append(el('p', 'empty', 'No data available'));
+    const s = d.h2h.sum, sm = el('div', 'h2h-sum');
+    [[it.h.n + ' won', s[0]], ['Draws', s[1]], [it.a.n + ' won', s[2]]].forEach(([k, v]) => { const c = el('div'); c.append(el('b', '', String(v)), el('small', '', k)); sm.append(c); });
+    body.append(sm);
+    d.h2h.rows.forEach(r => { const x = el('div', 'h2h-row'); x.append(el('small', '', shortDate(r.d) + (r.lg ? ' · ' + r.lg : '')), el('span', '', r.h), el('b', '', r.gh + ' - ' + r.ga), el('span', '', r.a)); body.append(x); });
+  } else {
+    if (!d.stats || !d.stats.length) return body.append(el('p', 'empty', sc || d.fin ? 'No statistics yet' : 'Statistics show here when the game starts.'));
+    d.stats.forEach(r => {
+      const a = Number(r.h) || 0, b = Number(r.a) || 0, pct = String(r.h).includes('%'), ta = pct ? parseFloat(r.h) || 0 : a, tb = pct ? parseFloat(r.a) || 0 : b, tot = ta + tb;
+      const x = el('div', 'st-row'), bar = el('div', 'st-bar');
+      const l = el('i'), rr = el('i'); l.style.width = (tot ? ta / tot * 100 : 50) + '%'; rr.style.width = (tot ? tb / tot * 100 : 50) + '%'; bar.append(l, rr);
+      const top2 = el('div', 'st-top'); top2.append(el('b', '', r.h === null ? '-' : String(r.h)), el('span', '', r.k), el('b', '', r.a === null ? '-' : String(r.a)));
+      x.append(top2, bar); body.append(x);
+    });
+  }
+}
+$('infoClose').onclick = () => $('infoDlg').close();
+$('infoDlg').addEventListener('close', () => { clearInterval(infoTimer); infoIt = null; });
+
 // ── TV ──────────────────────────────────────────────────────
 const cv = $('fbcv'), ctx = cv.getContext('2d'), W = 800, H = 450;
 const F442 = [[.05, .5], [.18, .15], [.18, .38], [.18, .62], [.18, .85], [.38, .15], [.38, .38], [.38, .62], [.38, .85], [.5, .38], [.5, .62]];
@@ -565,6 +677,12 @@ function crowd(t, cheer) {          // the people in the stands (top and bottom 
 }
 function person(x, y, r, fill, edge) { ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = edge; ctx.lineWidth = 2; ctx.stroke(); }
 
+const cvImgs = {};
+function cvLogo(name) {                                                // a club logo for the TV scoreboard (drawn once it has loaded)
+  const u = LOGOS[name]; if (!u) return null; let im = cvImgs[u];
+  if (!im) { im = cvImgs[u] = new Image(); im.src = u; im.onerror = () => { delete LOGOS[name]; }; }
+  return im.complete && im.naturalWidth ? im : null;
+}
 function draw(now) {
   requestAnimationFrame(draw);
   if (!S || !CU) { pitch(); return; }
@@ -597,13 +715,16 @@ function draw(now) {
   ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.beginPath(); ctx.ellipse(ball[0] + 3, ball[1] + 6, 7, 3, 0, 0, 7); ctx.fill();
   ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ball[0], ball[1], 6.5, 0, 7); ctx.fill(); ctx.strokeStyle = '#111'; ctx.lineWidth = 1.5; ctx.stroke();
   ctx.font = '700 22px Segoe UI,Roboto,sans-serif'; ctx.textBaseline = 'middle';
-  ctx.fillStyle = 'rgba(0,0,0,.72)'; ctx.fillRect(24, 26, 330, 40);
-  ctx.fillStyle = f.h.col; ctx.fillRect(24, 26, 6, 40); ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.fillText(f.h.c, 40, 46);
-  ctx.textAlign = 'center'; ctx.fillStyle = '#ffd23f'; ctx.fillText(sh + '  -  ' + sa, 150, 46);
-  ctx.textAlign = 'right'; ctx.fillStyle = '#fff'; ctx.fillText(f.a.c, 262, 46);
-  ctx.fillStyle = f.a.col; ctx.fillRect(264, 26, 6, 40);
-  ctx.fillStyle = '#d93a3a'; ctx.fillRect(280, 26, 74, 40); ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = '700 18px Segoe UI,sans-serif';
-  ctx.fillText(c.ph === 'wait' ? "0'" : playing ? (c.min === 45 ? 'HT' : c.min + "'") : 'FT', 317, 46);
+  ctx.fillStyle = 'rgba(0,0,0,.72)'; ctx.fillRect(24, 26, 420, 40);
+  ctx.fillStyle = f.h.col; ctx.fillRect(24, 26, 6, 40); const lh = cvLogo(f.h.n), la = cvLogo(f.a.n);
+  if (lh) ctx.drawImage(lh, 36, 31, 30, 30);
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.fillText(f.h.c, lh ? 72 : 40, 46);
+  ctx.textAlign = 'center'; ctx.fillStyle = '#ffd23f'; ctx.fillText(sh + '  -  ' + sa, 196, 46);
+  ctx.textAlign = 'right'; ctx.fillStyle = '#fff'; ctx.fillText(f.a.c, la ? 318 : 350, 46);
+  if (la) ctx.drawImage(la, 324, 31, 30, 30);
+  ctx.fillStyle = f.a.col; ctx.fillRect(356, 26, 6, 40);
+  ctx.fillStyle = '#d93a3a'; ctx.fillRect(368, 26, 76, 40); ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = '700 18px Segoe UI,sans-serif';
+  ctx.fillText(c.ph === 'wait' ? "0'" : playing ? (c.min === 45 ? 'HT' : c.min + "'") : 'FT', 406, 46);
   ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(W - 150, 26, 126, 28); ctx.fillStyle = '#fff'; ctx.font = '600 13px Segoe UI,sans-serif'; ctx.fillText('VIRTUAL LEAGUE', W - 87, 40);
   const banner = (a, b) => { ctx.fillStyle = 'rgba(0,0,0,.62)'; ctx.fillRect(0, H / 2 - 60, W, 120); ctx.fillStyle = '#fff'; ctx.font = '800 40px Segoe UI,sans-serif'; ctx.textAlign = 'center'; ctx.fillText(a, W / 2, H / 2 - 14); ctx.font = '600 20px Segoe UI,sans-serif'; ctx.fillStyle = '#ffd23f'; ctx.fillText(b, W / 2, H / 2 + 28); };
   if (!playing) banner('FULL TIME  ' + sh + ' - ' + sa, 'Next kick-off in ' + mmss(nleft()) + ' · book the next round now');
@@ -613,6 +734,11 @@ function draw(now) {
 
 setInterval(paint, 250);
 setInterval(load, 1000);
-setInterval(() => { if (tab !== 'v') loadReal(); else if (R) renderReal(); }, 15000);
-load(); loadReal(); requestAnimationFrame(draw);
+let lastReal = 0;
+setInterval(() => {
+  const liveNow = !!R && R.events.some(e => !e.fin && Date.now() + roff >= e.t), gap = liveNow ? 7000 : 15000;
+  if (Date.now() - lastReal < gap) return; lastReal = Date.now();
+  if (tab !== 'v') loadReal(); else if (R) renderReal();
+}, 2000);
+load(); loadReal(); loadLogos(); setInterval(loadLogos, 12000); requestAnimationFrame(draw);
 if (/^#code=/i.test(location.hash)) { setTab('r'); loadCode(location.hash.slice(6)); } else if (location.hash === '#real') setTab('r'); else if (location.hash === '#bets' || location.hash === '#tickets') setTab('b');
