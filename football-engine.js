@@ -753,7 +753,7 @@ module.exports = function createFootball(opts) {
   const FREE_REFRESH = Math.max(5, Number(process.env.FREE_REFRESH_MIN) || 30) * 60000, FREE_LIVE_MS = Math.max(30, Number(process.env.FREE_LIVE_SEC) || 60) * 1000;
   const ymd = (t) => new Date(t).toISOString().slice(0, 10).replace(/-/g, '');
   async function espnRaw(slug, dates) {                                                    // → { status, events }   dates: 'YYYYMMDD' or 'YYYYMMDD-YYYYMMDD'; none = ESPN's own current / next matchday
-    const r = await fetch(ESPN + encodeURIComponent(slug) + '/scoreboard' + (dates ? '?dates=' + dates : ''), { signal: AbortSignal.timeout(20000), headers: { accept: 'application/json' } });
+    const r = await fetch(ESPN + encodeURIComponent(slug) + '/scoreboard?limit=1000' + (dates ? '&dates=' + dates : ''), { signal: AbortSignal.timeout(20000), headers: { accept: 'application/json' } });
     if (r.status === 404 || r.status === 400) return { status: r.status, events: [] };
     if (!r.ok) throw new Error('espn ' + r.status);
     const j = await r.json().catch(() => ({}));
