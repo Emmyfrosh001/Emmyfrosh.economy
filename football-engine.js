@@ -689,12 +689,17 @@ module.exports = function createFootball(opts) {
   const FREE_LEAGUES = String(process.env.FREE_LEAGUES || '').split(',').map(x => x.trim()).filter(x => /^[a-z0-9_.]+$/i.test(x)), FREE_LG = FREE_LEAGUES.length ? FREE_LEAGUES : Object.keys(ESPN_LG);
   const FREE_REFRESH = Math.max(5, Number(process.env.FREE_REFRESH_MIN) || 30) * 60000, FREE_LIVE_MS = Math.max(30, Number(process.env.FREE_LIVE_SEC) || 60) * 1000;
   const ymd = (t) => new Date(t).toISOString().slice(0, 10).replace(/-/g, '');
-  async function espnGet(slug, from, to) {
-    const r = await fetch(ESPN + encodeURIComponent(slug) + '/scoreboard?limit=300&dates=' + ymd(from) + '-' + ymd(to), { signal: AbortSignal.timeout(20000), headers: { accept: 'application/json' } });
-    if (r.status === 404 || r.status === 400) return [];                                   // this feed has no such league: not an error
+  async function espnRaw(slug, from, to) {                                                  // → { status, events }  (from/to omitted = ESPN's own "current / next matchday")
+    const r = await fetch(ESPN + encodeURIComponent(slug) + '/scoreboard' + (from ? '?limit=300&dates=' + ymd(from) + '-' + ymd(to) : ''), { signal: AbortSignal.timeout(20000), headers: { accept: 'application/json' } });
+    if (r.status === 404 || r.status === 400) return { status: r.status, events: [] };
     if (!r.ok) throw new Error('espn ' + r.status);
     const j = await r.json().catch(() => ({}));
-    return Array.isArray(j.events) ? j.events : [];
+    return { status: 200, events: Array.isArray(j.events) ? j.events : [] };
+  }
+  async function espnGet(slug, from, to) {                                                  // dated range first; if that is empty, ESPN's default scoreboard (its current / next matchday)
+    const a = await espnRaw(slug, from, to);
+    if (a.events.length || a.status !== 200) return a;
+    return espnRaw(slug).catch(() => a);
   }
   // strength of a team (1.0 weak .. ~1.95 elite): the club ratings above when the name matches, else the league record (W-D-L), else average
   const KNOWN_T = LG.flatMap(([, ts]) => ts);
@@ -761,9 +766,9 @@ module.exports = function createFootball(opts) {
       const from = now - 2 * 86400000, to = now + DAYS * 86400000;
       for (let i = 0; i < lgs.length; i += 6) await Promise.all(lgs.slice(i, i + 6).map(async (lg) => {
         try {
-          const list = await espnGet(lg, from, to); let n = 0;
-          for (const e of list) { try { fresh += applyFree(lg, e); if (e && e.status && e.status.type && e.status.type.state === 'pre') n++; } catch (x) { } }
-          if (full) diag[lg] = { n, err: '', at: now };
+          const got = await espnGet(lg, from, to); let n = 0;
+          for (const e of got.events) { try { fresh += applyFree(lg, e); if (e && e.status && e.status.type && e.status.type.state === 'pre') n++; } catch (x) { } }
+          if (full) diag[lg] = { n, err: got.status !== 200 ? 'ESPN does not know the league code "' + lg + '"' : '', raw: got.events.length, at: now };
         } catch (x) { const m = String(x.message || x).slice(0, 100); errs.push(m); if (full) diag[lg] = { n: 0, err: m, at: now }; }
       }));
       if (full) { real.diag = diag; real.lastFetch = now; real.lastError = errs.length === lgs.length && errs.length ? 'match feed: ' + errs[0] : ''; }
@@ -994,6 +999,15 @@ module.exports = function createFootball(opts) {
     if (p === '/football/real/state' && req.method === 'GET') {
       if (hit('fbr', clientIp(req), 1200, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
       return send(res, 200, realView(acc));
+    }
+    if (p === '/football/real/debug' && req.method === 'GET') {                              // open in a browser: /football/real/debug?lg=uefa.nations  → what ESPN answers, raw
+      if (hit('fbd', clientIp(req), 20, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
+      const lg = String(new URL(req.url, 'http://x').searchParams.get('lg') || 'uefa.nations').replace(/[^a-z0-9_.]/gi, '').slice(0, 40), out = { ok: true, lg, source: FREE ? 'free' : 'odds', now: new Date().toISOString() };
+      const brief = (e) => ({ id: e.id, date: e.date, name: e.name, state: e.status && e.status.type && e.status.type.state, type: e.status && e.status.type && e.status.type.name });
+      try { const a = await espnRaw(lg, Date.now() - 86400000, Date.now() + DAYS * 86400000); out.range = { status: a.status, count: a.events.length, first: a.events.slice(0, 6).map(brief) }; } catch (x) { out.range = { error: String(x.message || x) }; }
+      try { const b = await espnRaw(lg); out.plain = { status: b.status, count: b.events.length, first: b.events.slice(0, 6).map(brief) }; } catch (x) { out.plain = { error: String(x.message || x) }; }
+      out.listed = Object.values(real.events).filter(e => e.lg === lg).length;
+      return send(res, 200, out);
     }
     const im = p.match(/^\/football\/real\/info\/([A-Za-z0-9]{4,64})$/);
     if (im && req.method === 'GET') {
