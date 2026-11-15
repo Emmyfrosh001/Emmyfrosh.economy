@@ -305,6 +305,7 @@ function gameAcked(a, ok, r) {
   }
   aviator.onAck(a.id);
   football.onAck(a.id);
+  slots.onAck(a.id);
 }
 
 // the bot reports each leg of a transfer: take the money first, give it only after that worked
@@ -411,6 +412,8 @@ async function route(req, res) {
   if (p.startsWith('/aviator/')) return aviator.handle(req, res, p);
   // ─────────── football TV (state + place bet) ───────────
   if (p.startsWith('/football/')) return football.handle(req, res, p);
+  // ─────────── slot machine (state + spin) ───────────
+  if (p.startsWith('/slots/')) return slots.handle(req, res, p);
 
   // ─────────── bot → site (needs API key) ───────────
   const BOT = ['/coupon/create', '/coupon/redeem', '/api/sync', '/api/market/sync', '/api/verify', '/api/pending', '/api/ack'];
@@ -748,7 +751,7 @@ async function route(req, res) {
       const fF = op === 'deposit' ? 'balance' : 'bank', tF = op === 'deposit' ? 'bank' : 'balance';
       if (db.transfers.some(t => t.from === me.jid && t.to === me.jid && t.status === 'debiting')) return send(res, 429, { ok: false, error: 'too_many_pending' });
       const committed = db.transfers.filter(t => t.from === me.jid && t.status === 'debiting' && (t.fromField || 'balance') === fF).reduce((s, t) => s + t.amount, 0);
-      const have = Math.max(0, (me.w[fF] || 0) - committed - (fF === 'balance' ? aviator.hold(acc.number) + football.hold(acc.number) : 0));   // money staked in the games is not free to move
+      const have = Math.max(0, (me.w[fF] || 0) - committed - (fF === 'balance' ? aviator.hold(acc.number) + football.hold(acc.number) + slots.hold(acc.number) : 0));   // money staked in the games is not free to move
       const all = String(b.amount).toLowerCase() === 'all';
       const amount = all ? have : Number(String(b.amount ?? '').replace(/[,$\s]/g, ''));
       if (!Number.isInteger(amount) || amount < 1 || amount > 1e12) return send(res, 400, { ok: false, error: all ? 'nothing_to_move' : 'bad_amount' });
@@ -792,7 +795,7 @@ async function route(req, res) {
       if (to.jid === from.jid) return send(res, 400, { ok: false, error: 'self' });
       const open = db.transfers.filter(t => t.from === from.jid && t.status === 'debiting' && (t.fromField || 'balance') === 'balance');
       if (open.length >= 3) return send(res, 429, { ok: false, error: 'too_many_pending' });
-      const have = Math.max(0, (from.w.balance || 0) - open.reduce((s, t) => s + t.amount, 0) - aviator.hold(acc.number) - football.hold(acc.number));   // money staked in the games is not free to send
+      const have = Math.max(0, (from.w.balance || 0) - open.reduce((s, t) => s + t.amount, 0) - aviator.hold(acc.number) - football.hold(acc.number) - slots.hold(acc.number));   // money staked in the games is not free to send
       if (amount > have) return send(res, 400, { ok: false, error: 'insufficient', need: amount, have });
       const t = {
         id: crypto.randomBytes(6).toString('hex'), owner: acc.number, toKey: key,
@@ -1225,6 +1228,30 @@ async function route(req, res) {
       return send(res, 200, { ok: true, settings: r.settings });
     }
 
+    // ── slot machine settings (on/off, easy / normal / hard, stake limits) ──
+    if (p === '/admin/api/slots' && req.method === 'GET') return send(res, 200, Object.assign({ ok: true }, slots.adminInfo()));
+    if (p === '/admin/api/slots' && req.method === 'POST') {
+      const b = await readBody(req);
+      const patch = {}, said = [];
+      if (b.difficulty !== undefined) { patch.difficulty = String(b.difficulty); said.push('difficulty ' + patch.difficulty); }
+      if (b.enabled !== undefined) { patch.enabled = !!b.enabled; said.push(patch.enabled ? 'slots ON' : 'slots OFF'); }
+      for (const k of ['minBet', 'maxBet']) {
+        if (b[k] === undefined) continue;
+        const v = String(b[k]).trim() === '' ? 0 : parseAmount(b[k]);
+        if (!Number.isFinite(v) || v < 0 || v > 1e12) return send(res, 400, { ok: false, error: 'bad_amount' });
+        patch[k] = v; said.push(k + ' ' + (v || 'no limit'));
+      }
+      const r = slots.setSettings(patch);
+      if (r.error) return send(res, 400, { ok: false, error: r.error });
+      addAudit(me, 'slots_settings', said.join(', ') || 'no change');
+      save();
+      return send(res, 200, { ok: true, settings: r.settings });
+    }
+    if (p === '/admin/api/slots/reset-stats' && req.method === 'POST') {
+      slots.resetStats(); addAudit(me, 'slots_reset_stats', 'slot totals reset'); save();
+      return send(res, 200, { ok: true });
+    }
+
     if (p === '/admin/api/game/reset-stats' && req.method === 'POST') {
       aviator.resetStats();
       addAudit(me, 'game_reset_stats', 'crash-plane totals reset');
@@ -1244,6 +1271,7 @@ async function route(req, res) {
     if (p === '/shop' || p === '/shop/') return sendFile(res, 'shop.html');
     if (p === '/aviator' || p === '/game' || p === '/crash') return sendFile(res, 'aviator.html');
     if (p === '/football' || p === '/football/' || p === '/sports') return sendFile(res, 'football.html');
+    if (p === '/slots' || p === '/slots/' || p === '/slot') return sendFile(res, 'slots.html');
     if (p === '/login' || p === '/login/' || p === '/signup' || p === '/signup/') return sendFile(res, 'login.html');
     if (/^\/[A-Za-z0-9_.-]+$/.test(p) && ['.css', '.js', '.svg', '.png', '.ico'].includes(path.extname(p)))
       return sendFile(res, p.slice(1));
@@ -1268,7 +1296,7 @@ const aviator = require('./aviator-engine')({
     return acc && !acc.banned ? acc : null;
   },
   // (the crash plane also sees what is staked in football, so one coin cannot be bet twice)
-  getWallet: (acc) => { const w = walletFor(acc); if (w) w.balance -= football.hold(acc.number); return w; },
+  getWallet: (acc) => { const w = walletFor(acc); if (w) w.balance -= football.hold(acc.number) + slots.hold(acc.number); return w; },
   queueAdj: queueGameAdj,
   getAdj: (id) => db.gameAdj.find(x => x.id === id) || null
 });
@@ -1281,7 +1309,20 @@ const football = require('./football-engine')({
     const acc = us ? db.accounts[us.user] : null;
     return acc && !acc.banned ? acc : null;
   },
-  getWallet: (acc) => { const w = walletFor(acc); if (w) w.balance -= aviator.hold(acc.number); return w; },
+  getWallet: (acc) => { const w = walletFor(acc); if (w) w.balance -= aviator.hold(acc.number) + slots.hold(acc.number); return w; },
+  queueAdj: queueGameAdj,
+  getAdj: (id) => db.gameAdj.find(x => x.id === id) || null
+});
+
+// the slot machine: its own file, same wallet and ledger rules (it also sees what the other games have staked)
+const slots = require('./slots-engine')({
+  dataDir: DATA_DIR, send, readBody, clientIp, hit, save,
+  getAcc: (req) => {
+    const us = getSession(req, 'usid', usessions);
+    const acc = us ? db.accounts[us.user] : null;
+    return acc && !acc.banned ? acc : null;
+  },
+  getWallet: (acc) => { const w = walletFor(acc); if (w) w.balance -= aviator.hold(acc.number) + football.hold(acc.number); return w; },
   queueAdj: queueGameAdj,
   getAdj: (id) => db.gameAdj.find(x => x.id === id) || null
 });
