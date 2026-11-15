@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0d0a24">
+  <title>Slots</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/aviator.css">
+  <link rel="stylesheet" href="/slots.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%B0%3C/text%3E%3C/svg%3E">
+</head>
+<body class="public shop av sl">
+
+  <header class="topbar">
+    <div class="wrap topbar-in">
+      <a class="back" href="/" aria-label="Home">&#8592;</a>
+      <div class="brand"><span class="bname">𝛯𝛭𝛭𝑌𝐹𝑅𝛩𝑆𝛨 💔</span></div>
+      <span class="grow"></span>
+      <div id="balChip" class="bal-chip" hidden><span>Wallet</span><strong id="bal">0</strong></div>
+      <a id="hdLogin" class="btn-n small ghost-n" href="/login?next=%2Fslots" hidden>Log in</a>
+      <a id="hdSignup" class="btn-n small" href="/signup?next=%2Fslots" hidden>Sign up</a>
+    </div>
+  </header>
+
+  <main class="wrap sl-main">
+    <p id="toast" class="s-toast" role="status" hidden></p>
+
+    <div class="machine">
+      <div class="m-title"><span>🎰</span> LUCKY SLOTS <span>🎰</span></div>
+      <div class="reels-wrap">
+        <div id="reels" class="reels" aria-label="Slot reels"></div>
+        <svg id="lineSvg" class="line-svg" viewBox="0 0 300 300" preserveAspectRatio="none" aria-hidden="true"></svg>
+        <div id="winPop" class="win-pop" hidden><small id="winTag">WIN</small><b id="winAmt">0</b></div>
+      </div>
+      <div class="m-bar">
+        <div class="m-box"><small>Last win</small><b id="lastWin">0</b></div>
+        <div class="m-box"><small>Total bet</small><b id="totBet">100</b></div>
+        <div class="m-box"><small>Lines</small><b>5</b></div>
+      </div>
+    </div>
+
+    <div id="loginNote" class="s-card av-note" hidden>
+      <strong>Log in to play.</strong>
+      <span class="s-muted">You can look around without an account.</span>
+      <a class="btn-n small" href="/login?next=%2Fslots">Log in</a>
+      <a class="btn-n small ghost-n" href="/signup?next=%2Fslots">Create account</a>
+    </div>
+    <div id="noMoney" class="s-card av-note" hidden>
+      <strong>Your wallet is empty.</strong>
+      <span class="s-muted">You can play again as soon as you have money.</span>
+      <a class="btn-n small ghost-n" href="/shop">Open shop &amp; bank</a>
+    </div>
+    <div id="closedNote" class="s-card av-note" hidden>
+      <strong>The slot machine is closed right now.</strong>
+      <span class="s-muted">Please check again later.</span>
+    </div>
+
+    <div class="ctrl">
+      <div class="amt-row">
+        <button class="step" id="minus" type="button" aria-label="Lower stake">−</button>
+        <input class="amt" id="amt" type="text" inputmode="decimal" value="100" aria-label="Stake amount" autocomplete="off">
+        <button class="step" id="plus" type="button" aria-label="Raise stake">+</button>
+      </div>
+      <div class="chips">
+        <button type="button" data-set="10">10</button>
+        <button type="button" data-set="100">100</button>
+        <button type="button" data-set="500">500</button>
+        <button type="button" data-set="1000">1k</button>
+        <button type="button" data-set="max">MAX</button>
+      </div>
+      <div class="spin-row">
+        <label class="tg"><input id="turbo" type="checkbox"><span>⚡ Turbo</span></label>
+        <button id="spin" class="spin" type="button" aria-label="Spin"><span>SPIN</span></button>
+        <div class="auto-w">
+          <button id="auto" class="auto" type="button">Auto</button>
+          <div id="autoMenu" class="auto-menu" hidden>
+            <button type="button" data-n="10">10 spins</button><button type="button" data-n="25">25 spins</button><button type="button" data-n="50">50 spins</button><button type="button" data-n="100">100 spins</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <section class="s-card box pays">
+      <div class="box-h"><h2>Pay table</h2><span id="rtp" class="s-muted small"></span></div>
+      <p class="s-muted small">Match <b>3 of the same symbol</b> on a pay line to win. There are 5 pay lines: the 3 rows and the 2 diagonals. The numbers are multiples of your <b>total bet</b>. 🃏 is wild and replaces any symbol.</p>
+      <div id="payRows" class="pay-rows"></div>
+    </section>
+    <section class="s-card box">
+      <div class="box-h"><h2>Big wins</h2></div>
+      <div id="recent" class="recent"></div>
+      <p id="recentEmpty" class="s-empty">No big wins yet.</p>
+    </section>
+    <p class="s-muted small">You play with the money in your wallet, the same wallet the bot uses. The stake leaves it on every spin and wins are added right away. The bot's own balance catches up within about 20 seconds. When your wallet is empty you cannot spin.</p>
+  </main>
+
+  <div id="bigWin" class="big-win" hidden><div><small id="bwTag">BIG WIN</small><b id="bwAmt">0</b></div></div>
+
+  <script src="/slots.js"></script>
+  <script src="/chat.js"></script>
+</body>
+</html>
