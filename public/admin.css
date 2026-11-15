@@ -179,6 +179,9 @@ body.admin .stat-v {
 .tile.long .stat-v { font-size: clamp(1rem, 4.3vw, 1.4rem); line-height: 1.2; }
 body.admin .stat-k { color: rgba(255, 255, 255, .94); font-size: clamp(.82rem, 3.2vw, 1rem); line-height: 1.25; }
 .tile.wide { grid-column: 1 / -1; }
+.tile { overflow: hidden; }
+.t-txt { flex: 1; }
+.tile.xl .stat-v { font-size: clamp(.9rem, 4.4vw, 1.4rem); overflow-wrap: anywhere; }
 
 /* ── tip strip ───────────────────────────────── */
 .tip {
@@ -315,6 +318,47 @@ body.admin .login-card h1 { text-align: center; font-family: var(--font); font-s
 
 /* ── small screens ───────────────────────────── */
 @media (max-width: 430px) {
+  /* smaller + more breathing room */
+  .navgrid { gap: 16px; margin-top: 14px; }
+  body.admin .tabs { gap: 12px; }
+  .tabs-top { gap: 6px; padding: 6px; }
+  .tabs-top .tab + .tab::before { display: none; }
+  body.admin .tab { font-size: .7rem; padding: 9px 2px; gap: 3px; border-radius: 14px; }
+  .tab .ic, .tab-out .ic { font-size: 1.25rem; }
+  .tab-out { font-size: .8rem; border-radius: 14px; }
+  .card, .card-panel { margin: 22px 0; border-radius: 18px; }
+  .card-head { padding: 14px 14px 10px; gap: 10px; }
+  .card-head h2 { font-size: 1.1rem; }
+  .h-ic { font-size: 1.7rem; }
+  .card-toggle { width: 36px; height: 36px; font-size: 1.1rem; }
+  .card-body { padding: 0 12px 16px; gap: 16px; }
+  body.admin .stats.tiles { gap: 14px; }
+  .tile { gap: 4px; padding: 11px 11px 12px; border-radius: 14px; }
+  .tile > .ic { font-size: 1.7rem; }
+  body.admin .stat-v { font-size: clamp(1rem, 5vw, 1.4rem); }
+  body.admin .stat-k { font-size: .76rem; }
+  .tile.long .stat-v { font-size: clamp(.85rem, 4vw, 1.05rem); }
+  .tile.xl .stat-v { font-size: clamp(.72rem, 3.5vw, .95rem); }
+  .tip { padding: 10px 12px 10px 10px; gap: 10px; border-radius: 14px; }
+  .tip-ic { width: 40px; height: 40px; font-size: 1.4rem; border-radius: 11px; }
+  .tip p { font-size: .8rem; }
+  .settings { padding: 14px; gap: 16px; }
+  .field label { font-size: .88rem; } .field label .ic { font-size: 1.3rem; }
+  body.admin input, body.admin select { padding: 11px 10px; font-size: .88rem; }
+  .btn.save { padding: 13px; font-size: .98rem; } .btn.save .ic { font-size: 1.4rem; }
+  .chip { font-size: .78rem; padding: 5px 11px; }
+  .dock { margin-top: 24px; } .dock button { font-size: .72rem; padding: 14px 2px; gap: 6px; } .dock .ic { font-size: 1.4rem; }
+  .logo { width: 42px; height: 42px; }
+  body.admin .logo .ic { width: 22px; height: 17px; }
+  .logout-btn { font-size: .8rem; padding: 7px 10px; }
+  /* phones: icon on top, text underneath, so long money values get the full tile width */
+  .tile { flex-direction: column; align-items: flex-start; gap: 6px; padding: 12px 12px 14px; }
+  .tile > .ic { font-size: 2.1rem; }
+  .tile.wide { flex-direction: row; align-items: center; }
+  .t-txt { width: 100%; }
+  body.admin .stat-v { font-size: clamp(1.15rem, 6vw, 1.7rem); }
+  .tile.xl .stat-v { font-size: clamp(.78rem, 3.9vw, 1.1rem); }
+  .tile.long .stat-v { font-size: clamp(.95rem, 4.6vw, 1.2rem); }
   body.admin .tab { flex-direction: column; gap: 4px; font-size: .78rem; padding: 10px 2px; }
   .tabs-top .tab { padding: 10px 2px; }
   .tab .ic { font-size: 1.6rem; }
