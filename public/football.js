@@ -296,6 +296,7 @@ function renderBtn() {
   const n = slipCount(), on = (tab === 'v' && !!S && S.enabled) || (tab === 'r' && !!R && !R.locked);
   $('open').textContent = 'Betslip' + (n ? ' (' + n + ') · ' + total().toFixed(2) : '');
   $('open').disabled = !n || !on;
+  const fn = $('fabN'); fn.hidden = !n; fn.textContent = String(n); $('fab').hidden = tab === 'b';
 }
 
 // ── real matches ────────────────────────────────────────────
@@ -631,15 +632,38 @@ function renderInfo() {
   const row = el('div', 'inf-score'); const tc = (t) => { const x = el('div', 'inf-team'); x.append(crest(t), el('b', '', t.n)); return x; };
   row.append(tc(it.h), el('span', 'big', sc ? sc[0] + ' : ' + sc[1] : 'vs'), tc(it.a)); top.append(row); head.append(top);
   if (d.ok === false) { body.append(el('p', 'empty', 'No data available right now.')); return; }
-  if (!d.api) body.append(el('p', 'empty', 'Detailed match info (head to head and live statistics) is not switched on yet.'));
-  else if (infoTab === 'h2h') {
-    if (!d.h2h || !d.h2h.rows.length) return body.append(el('p', 'empty', 'No data available'));
-    const s = d.h2h.sum, sm = el('div', 'h2h-sum');
-    [[it.h.n + ' won', s[0]], ['Draws', s[1]], [it.a.n + ' won', s[2]]].forEach(([k, v]) => { const c = el('div'); c.append(el('b', '', String(v)), el('small', '', k)); sm.append(c); });
-    body.append(sm);
-    d.h2h.rows.forEach(r => { const x = el('div', 'h2h-row'); x.append(el('small', '', shortDate(r.d) + (r.lg ? ' · ' + r.lg : '')), el('span', '', r.h), el('b', '', r.gh + ' - ' + r.ga), el('span', '', r.a)); body.append(x); });
+  if (infoTab === 'h2h') {
+    const H = d.h2h, F = d.form;
+    if (!H && !F) return body.append(el('p', 'empty', 'No previous matches found for these teams yet.'));
+    const two = (l, mid, r, cls) => { const x = el('div', 'h2h-line' + (cls ? ' ' + cls : '')); x.append(el('b', 'l', l), el('span', 'm', mid), el('b', 'r', r)); return x; };
+    const fx = (v) => v == null ? '-' : (Math.round(v * 10) / 10).toFixed(1);
+    if (H) {
+      body.append(el('div', 'h2h-title', 'Previous meetings'));
+      const s = H.sum, tot = s[0] + s[1] + s[2] || 1, sm = el('div', 'h2h-sum');
+      [[it.h.n, 'wins', s[0], 'hw'], ['', 'draws', s[1], 'dr'], [it.a.n, 'wins', s[2], 'aw']].forEach(([n, k, v, c]) => { const x = el('div', c); x.append(el('small', '', n), el('small', '', k), el('b', '', String(v))); sm.append(x); });
+      body.append(sm);
+      const bar = el('div', 'h2h-bar'); [['hw', s[0]], ['dr', s[1]], ['aw', s[2]]].forEach(([c, v]) => { const i = el('i', c); i.style.flexGrow = String(v); if (v) bar.append(i); }); body.append(bar);
+      body.append(el('div', 'h2h-title', 'Highest win'));
+      const bw = (b) => b ? b.s + ' · ' + shortDate(b.d) : 'N/A'; body.append(two(bw(H.best[0]), '', bw(H.best[1]), 'small'));
+      body.append(el('div', 'h2h-title', 'Averages'));
+      body.append(two(fx(H.avg.pts[0]), 'Points', fx(H.avg.pts[1])), two(fx(H.avg.gf[0]), 'Goals scored', fx(H.avg.gf[1])));
+      H.rows.forEach(r => { const x = el('div', 'h2h-row'); x.append(el('small', '', shortDate(r.d) + (r.lg ? ' · ' + r.lg : '')), el('span', '', r.h), el('b', '', r.gh + ' : ' + r.ga), el('span', '', r.a)); body.append(x); });
+    } else body.append(el('p', 'empty', 'These two teams have no recorded meetings.'));
+    if (F) {
+      const pill = (r) => el('i', 'fp ' + r, r);
+      body.append(el('div', 'h2h-title', 'Last 5 matches · form'));
+      const fr = el('div', 'h2h-line'); [F.h, F.a].forEach((t, i) => { const w = el('div', 'fps' + (i ? ' r' : '')); if (t) t.rows.forEach(r => w.append(pill(r.r))); else w.append(el('small', '', 'N/A')); fr.append(w); });
+      fr.insertBefore(el('span', 'm', 'Form'), fr.lastChild); body.append(fr);
+      const row = (label, g) => two(F.h ? g(F.h) : '-', label, F.a ? g(F.a) : '-');
+      body.append(row('Win / Draw / Loss', t => t.w + ' / ' + t.d + ' / ' + t.l), row('Avg goals scored', t => fx(t.gf)), row('Avg goals conceded', t => fx(t.ga)),
+        row('Both teams scored', t => t.btts + '%'), row('Over 1.5', t => t.o15 + '%'), row('Over 2.5', t => t.o25 + '%'));
+      [[it.h.n, F.h], [it.a.n, F.a]].forEach(([n, t]) => {
+        if (!t) return; body.append(el('div', 'h2h-title', n));
+        t.rows.forEach(r => { const x = el('div', 'h2h-row'); x.append(el('small', '', shortDate(r.d) + (r.lg ? ' · ' + r.lg : '')), el('span', '', r.h), el('b', '', r.gh + ' : ' + r.ga), el('span', '', r.a)); body.append(x); });
+      });
+    }
   } else {
-    if (!d.stats || !d.stats.length) return body.append(el('p', 'empty', sc || d.fin ? 'No statistics yet' : 'Statistics show here when the game starts.'));
+    if (!d.stats || !d.stats.length) return body.append(el('p', 'empty', sc || d.fin ? 'Live statistics are not available for this match.' : 'Statistics show here when the game starts.'));
     d.stats.forEach(r => {
       const a = Number(r.h) || 0, b = Number(r.a) || 0, pct = String(r.h).includes('%'), ta = pct ? parseFloat(r.h) || 0 : a, tb = pct ? parseFloat(r.a) || 0 : b, tot = ta + tb;
       const x = el('div', 'st-row'), bar = el('div', 'st-bar');
@@ -742,3 +766,13 @@ setInterval(() => {
 }, 2000);
 load(); loadReal(); loadLogos(); setInterval(loadLogos, 12000); requestAnimationFrame(draw);
 if (/^#code=/i.test(location.hash)) { setTab('r'); loadCode(location.hash.slice(6)); } else if (location.hash === '#real') setTab('r'); else if (location.hash === '#bets' || location.hash === '#tickets') setTab('b');
+
+// ── the round booking-code / betslip button (like SportyBet) ──
+$('fab').onclick = () => {
+  const real = tab !== 'v'; $('codeFormV').hidden = real; $('codeForm').hidden = !real;
+  $('cdSlip').hidden = !slipCount(); $('codeDlg').showModal(); setTimeout(() => $(real ? 'codeIn' : 'codeInV').focus(), 50);
+};
+$('codeClose').onclick = () => $('codeDlg').close();
+['codeForm', 'codeFormV'].forEach(id => $(id).addEventListener('submit', () => $('codeDlg').close()));
+$('cdSlip').onclick = () => { $('codeDlg').close(); if (!$('open').disabled) $('open').click(); };
+renderBtn();
