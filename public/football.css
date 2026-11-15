@@ -166,3 +166,60 @@ dialog::backdrop { background: rgba(0,0,0,.65); }
 .sel.locked { opacity: .7; background: rgba(255,255,255,.03); }
 .editbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; padding: 10px 12px; border-color: #ffc400; }
 .editbar .s-muted { flex: 1 1 200px; font-size: .8rem; }
+
+/* full team names, stacked (like SportyBet) */
+.sp-main { grid-template-columns: minmax(0, 1fr) 172px; }
+.sp-teams { display: flex; flex-direction: column; gap: 8px; }
+.tl { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tn { font-size: .95rem; line-height: 1.15; overflow-wrap: anywhere; }
+.tl .stars { margin-left: 2px; }
+.sg { margin-left: auto; padding-left: 8px; font-size: 1rem; color: #ff6b7a; font-variant-numeric: tabular-nums; }
+.info { margin-left: 10px; background: none; border: 0; color: #9aa3b8; cursor: pointer; padding: 2px 4px; display: inline-flex; }
+.info:hover { color: var(--sp-green); }
+.sp-foot .st { margin-left: auto; text-align: right; }
+
+/* locked room */
+.lockbox { text-align: center; padding: 38px 16px; margin-top: 14px; border-radius: 16px; background: #0f1424; border: 1.5px solid #3b1d1a; }
+.lockbox .lk { font-size: 3rem; }
+.lockbox h2 { font-family: inherit; margin: 6px 0; color: #ff8b82; }
+.lockbox p { color: #9db4e6; margin: 0; }
+.locked > :not(.lockbox) { display: none !important; }
+
+/* match info dialog */
+.inf-top { padding: 12px 16px 4px; text-align: center; }
+.inf-lg { color: #9aa3b8; font-size: .78rem; }
+.inf-clock { margin-top: 4px; color: #9db4e6; font-weight: 700; font-size: .9rem; }
+.inf-clock.live { color: #ff6b7a; }
+.inf-score { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; margin-top: 6px; }
+.inf-score b { font-size: .95rem; }
+.inf-score .big { font-size: 1.8rem; font-weight: 800; letter-spacing: .05em; font-variant-numeric: tabular-nums; }
+.inf-tabs { margin-top: 8px; border-radius: 0; }
+.h2h-sum { display: grid; grid-template-columns: repeat(3, 1fr); text-align: center; gap: 6px; margin: 4px 0 10px; }
+.h2h-sum b { display: block; font-size: 1.5rem; color: #5ff0ff; }
+.h2h-sum small { color: #9aa3b8; font-size: .72rem; }
+.h2h-row { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid #1e2440; font-size: .85rem; }
+.h2h-row small { grid-column: 1 / -1; color: #9aa3b8; font-size: .72rem; }
+.h2h-row span:last-child { text-align: right; }
+.st-row { margin: 12px 0; }
+.st-top { display: grid; grid-template-columns: 1fr auto 1fr; text-align: center; font-size: .9rem; }
+.st-top b:first-child { text-align: left; color: #35d07f; }
+.st-top b:last-child { text-align: right; color: #ff6b7a; }
+.st-top span { color: #cfd6e6; }
+.st-bar { display: flex; gap: 4px; margin-top: 4px; }
+.st-bar i { height: 6px; border-radius: 3px; display: block; }
+.st-bar i:first-child { background: #35d07f; }
+.st-bar i:last-child { background: #ff6b7a; }
+
+/* logos */
+.crest { width: 26px; height: 26px; }
+.crest.logo { background: none; border: 0; overflow: hidden; }
+.crest.logo img { width: 100%; height: 100%; object-fit: contain; display: block; }
+/* booking code box */
+.code-row { display: flex; gap: 8px; margin: 10px 0 6px; }
+.code-row input { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 10px; border: 1.5px solid #262d4a; background: #070a14; color: #e8eefb; font: inherit; text-transform: uppercase; letter-spacing: .08em; }
+.code-out { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.code-out b { font-size: 1.2rem; letter-spacing: .15em; font-family: ui-monospace, Menlo, Consolas, monospace; color: #5ff0ff; }
+.cb-h { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.cb-x { background: none; border: 0; color: #9db4e6; font-size: 1.4rem; cursor: pointer; }
+.inf-team { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; }
+.inf-team .crest { width: 38px; height: 38px; }
