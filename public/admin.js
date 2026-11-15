@@ -11,6 +11,24 @@ function el(tag, cls, text) {
 function td(text, cls) { return el('td', cls || '', text); }
 function when(ts) { return ts ? new Date(ts).toLocaleString() : '—'; }
 
+const BRAND = 'ΞΜΜYFRΘSΗ';
+const SVGNS = 'http://www.w3.org/2000/svg';
+function icon(name) {
+  const s = document.createElementNS(SVGNS, 'svg');
+  s.setAttribute('class', 'ic'); s.setAttribute('aria-hidden', 'true');
+  const u = document.createElementNS(SVGNS, 'use'); u.setAttribute('href', '#i-' + name);
+  s.append(u); return s;
+}
+// one coloured tile:  [label, value, colour, icon, extra class]
+function tile([k, v, color, ic, extra]) {
+  const d = el('div', 'tile c-' + color + (extra ? ' ' + extra : '') + (String(v).length > 8 && !(extra || '').includes('long') ? ' long' : ''));
+  const t = el('div', 't-txt');
+  t.append(el('span', 'stat-v', v), el('span', 'stat-k', k));
+  d.append(icon(ic), t);
+  return d;
+}
+function fillTiles(box, rows) { box.replaceChildren(...rows.map(tile)); }
+
 const ERRORS = {
   wrong_login: 'Wrong username or password.',
   too_many_attempts: 'Too many attempts. Wait 15 minutes and try again.',
@@ -68,8 +86,9 @@ const say = (e) => toast(ERRORS[e.message] || 'Something went wrong. Try again.'
 function showLogin() { $('dashView').hidden = true; $('loginView').hidden = false; $('u').focus(); }
 function showDash(info) {
   $('loginView').hidden = true; $('dashView').hidden = false;
-  $('brand').textContent = info.siteName + ' admin';
-  document.title = info.siteName + ' admin';
+  $('brand').textContent = BRAND;
+  document.title = BRAND + ' · Admin';
+  $('host').textContent = location.host;
   refreshAll();
 }
 
@@ -86,10 +105,25 @@ $('loginForm').addEventListener('submit', async (e) => {
   }
 });
 
-$('logout').addEventListener('click', async () => {
+async function signOut() {
   try { await api('/admin/logout', 'POST'); } catch {}
   showLogin();
-});
+}
+$('logout').addEventListener('click', signOut);
+$('signout').addEventListener('click', signOut);
+
+// collapsible cards (the chevron in each card header)
+document.querySelectorAll('.card-toggle').forEach(b => b.addEventListener('click', () => {
+  const card = b.closest('.card'), shut = card.classList.toggle('collapsed');
+  b.setAttribute('aria-expanded', String(!shut));
+}));
+// quick dock under the page: PLAYER / CHANGE / STATUS
+document.querySelectorAll('.dock [data-go]').forEach(b => b.addEventListener('click', () => {
+  const tab = document.querySelector('.tab[data-tab="' + b.dataset.go + '"]');
+  if (tab) tab.click();
+  const f = b.dataset.focus && $(b.dataset.focus);
+  if (f) { f.scrollIntoView({ block: 'center' }); f.focus({ preventScroll: true }); } else window.scrollTo({ top: 0, behavior: 'smooth' });
+}));
 
 document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => {
   document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === b));
@@ -111,23 +145,17 @@ function refreshAll() { loadOverview(); loadUsers(); loadMarket(); loadCoupons()
 async function loadOverview() {
   try {
     const o = await api('/admin/api/overview');
-    const box = $('stats');
-    box.replaceChildren();
-    [
-      ['Players', fmt(o.players)],
-      ['Money in circulation', '$' + fmt(o.totalMoney)],
-      ['Coupons still open', fmt(o.activeCoupons)],
-      ['Coupon value unclaimed', '$' + fmt(o.couponValueLeft)],
-      ['Changes waiting for the bot', fmt(o.pendingEdits)],
-      ['Players with a site login', fmt(o.accounts)],
-      ['Banned accounts', fmt(o.bannedAccounts)],
-      ['Site orders (24h)', fmt(o.ordersToday)],
-      ['Last bot update', o.usersUpdatedAt ? new Date(o.usersUpdatedAt).toLocaleString() : 'never']
-    ].forEach(([k, v]) => {
-      const d = el('div', 'stat');
-      d.append(el('span', 'stat-v', v), el('span', 'stat-k', k));
-      box.append(d);
-    });
+    fillTiles($('stats'), [
+      ['Players', fmt(o.players), 'blue', 'users'],
+      ['Money in circulation', '$' + fmt(o.totalMoney), 'green', 'dollar'],
+      ['Coupons still open', fmt(o.activeCoupons), 'yellow', 'ticket'],
+      ['Coupon value unclaimed', '$' + fmt(o.couponValueLeft), 'purple', 'coins'],
+      ['Changes waiting for the bot', fmt(o.pendingEdits), 'blue', 'refresh'],
+      ['Players with a site login', fmt(o.accounts), 'green', 'user'],
+      ['Banned accounts', fmt(o.bannedAccounts), 'red', 'shield'],
+      ['Site orders (24h)', fmt(o.ordersToday), 'purple', 'cart'],
+      ['Last bot update', o.usersUpdatedAt ? new Date(o.usersUpdatedAt).toLocaleString() : 'never', 'yellow', 'clock', 'wide long']
+    ]);
   } catch (e) { if (e.message !== 'not_logged_in') say(e); }
 }
 
@@ -491,16 +519,15 @@ async function loadGame(fillForm) {
       $('gMax').value = j.settings.maxBet ? String(j.settings.maxBet) : '';
     }
     $('gDiffNote').textContent = DIFF_TEXT[sel.value] || '';
-    const box = $('gStats'); box.replaceChildren();
     const st = j.stats;
-    [
-      ['Mode now', j.difficulties[j.settings.difficulty].label + (j.settings.enabled ? '' : ' (game is OFF)')],
-      ['Watching now', fmt(j.watching)],
-      ['Bets this round', fmt(j.round.bets)],
-      ['Total staked', '$' + fmt(st.staked)],
-      ['Total paid to players', '$' + fmt(st.paid)],
-      [st.houseNet >= 0 ? 'House is up' : 'House is down', '$' + fmt(Math.abs(st.houseNet))]
-    ].forEach(([k, v]) => { const d = el('div', 'stat'); d.append(el('span', 'stat-v', v), el('span', 'stat-k', k)); box.append(d); });
+    fillTiles($('gStats'), [
+      ['Bets this round', fmt(j.round.bets), 'blue', 'users'],
+      ['Total staked', '$' + fmt(st.staked), 'green', 'dollar'],
+      ['Total paid to players', '$' + fmt(st.paid), 'purple', 'coins'],
+      [st.houseNet >= 0 ? 'House is up' : 'House is down', '$' + fmt(Math.abs(st.houseNet)), 'yellow', 'house'],
+      ['Watching now', fmt(j.watching), 'blue', 'user'],
+      ['Mode now', j.difficulties[j.settings.difficulty].label + (j.settings.enabled ? '' : ' (OFF)'), j.settings.enabled ? 'green' : 'red', 'target', 'long']
+    ]);
     const body = $('gWait'); body.replaceChildren();
     $('gWaitEmpty').hidden = j.waiting.length > 0;
     j.waiting.forEach(w => {
@@ -542,16 +569,23 @@ async function loadFootball(fillForm) {
       sel.value = s.mode; $('fMin').value = String(s.minBet); $('fMax').value = s.maxBet ? String(s.maxBet) : '';
     }
     $('fModeNote').textContent = FB_NOTE[sel.value] || '';
-    const s = j.settings, st = j.stats, box = $('fStats'); box.replaceChildren();
+    const s = j.settings, st = j.stats;
+    const chips = $('fChips'); chips.replaceChildren();
     [
-      ['Football now', !s.enabled ? 'LOCKED' : (s.virtual ? 'Virtual open' : 'Virtual locked') + ' · ' + (s.real ? 'Real open' : 'Real locked')],
-      ['Live betting', s.live ? 'On' : 'Off'],
-      ['Difficulty', j.modes[s.mode].label],
-      ['Real tickets open', fmt(j.real.openBets)],
-      ['Total staked', '$' + fmt(st.staked)],
-      ['Total paid to players', '$' + fmt(st.paid)],
-      [st.houseNet >= 0 ? 'House is up' : 'House is down', '$' + fmt(Math.abs(st.houseNet))]
-    ].forEach(([k, v]) => { const d = el('div', 'stat'); d.append(el('span', 'stat-v', v), el('span', 'stat-k', k)); box.append(d); });
+      [s.enabled ? 'Football open' : 'Football LOCKED', s.enabled],
+      [s.virtual ? 'Virtual TV open' : 'Virtual TV locked', s.virtual],
+      [s.real ? 'Real matches open' : 'Real matches locked', s.real],
+      [s.live ? 'Live betting on' : 'Live betting off', s.live],
+      ['Difficulty: ' + j.modes[s.mode].label, null]
+    ].forEach(([t, ok]) => chips.append(el('span', 'chip' + (ok === null ? '' : ok ? ' ok' : ' bad'), t)));
+    fillTiles($('fStats'), [
+      ['Real tickets open', fmt(j.real.openBets), 'blue', 'ticket'],
+      ['Total staked', '$' + fmt(st.staked), 'green', 'dollar'],
+      ['Total paid to players', '$' + fmt(st.paid), 'purple', 'coins'],
+      [st.houseNet >= 0 ? 'House is up' : 'House is down', '$' + fmt(Math.abs(st.houseNet)), 'yellow', 'house'],
+      ['Virtual round bets', fmt(j.round.nextBets + j.round.liveBets), 'blue', 'gamepad'],
+      ['Real matches listed', fmt(j.real.events), 'green', 'ball']
+    ]);
     const api1 = j.real.source === 'free' ? 'Real matches: free feed (no key, no limit) · ' + fmt(j.real.events) + ' matches · odds are calculated by the server' + (j.real.lastError ? ' · ' + j.real.lastError : '') : j.real.on ? 'Odds API: on' + (j.real.credits ? ' · ' + fmt(j.real.credits.left) + ' credits left' : '') + (j.real.lastError ? ' · ' + j.real.lastError : '') : 'Odds API: OFF (set ODDS_API_KEY on the server to show real matches).';
     const api2 = j.apiFootball.on ? 'Match info API: on' + (j.apiFootball.left != null ? ' · ' + fmt(j.apiFootball.left) + ' calls left today' : '') + (j.apiFootball.error ? ' · ' + j.apiFootball.error : '') : 'Match info API: OFF (set FOOTBALL_API_KEY for exact minutes, H2H and live statistics).';
     $('fApi').textContent = api1 + '  ' + api2;
