@@ -102,6 +102,7 @@ document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () =>
   if (b.dataset.tab === 'coupons') loadCoupons();
   if (b.dataset.tab === 'activity') loadActivity();
   if (b.dataset.tab === 'game') loadGame(true);
+  if (b.dataset.tab === 'football') loadFootball(true);
 }));
 
 function refreshAll() { loadOverview(); loadUsers(); loadMarket(); loadCoupons(); loadActivity(); loadChats(); }
@@ -496,6 +497,47 @@ $('gReset').addEventListener('click', async () => {
   try { await api('/admin/api/game/reset-stats', 'POST'); toast('Totals reset.'); loadGame(); } catch (err) { say(err); }
 });
 setInterval(() => { if (!$('dashView').hidden && !document.hidden && !$('tab-game').hidden) loadGame(); }, 5000);
+
+// ── football (virtual TV + real matches) ─────────────────────────
+const FB_NOTE = {
+  easy: 'Easy: players win more often. Virtual TV: the house keeps about 4%. Real matches: the real bookmaker prices are paid in full.',
+  normal: 'Normal: balanced. Virtual TV: the house keeps about 8%. Real matches: the prices are trimmed a little (about 3%).',
+  hard: 'Hard: players lose more often. Virtual TV: the house keeps about 15%. Real matches: the prices are trimmed more (about 8%).'
+};
+async function loadFootball(fillForm) {
+  try {
+    const j = await api('/admin/api/football'), sel = $('fMode');
+    if (!sel.options.length) Object.entries(j.modes).forEach(([k, v]) => sel.append(new Option(v.label, k)));
+    if (fillForm) {
+      const s = j.settings;
+      $('fOn').value = s.enabled ? '1' : '0'; $('fVirt').value = s.virtual ? '1' : '0'; $('fReal').value = s.real ? '1' : '0'; $('fLive').value = s.live ? '1' : '0';
+      sel.value = s.mode; $('fMin').value = String(s.minBet); $('fMax').value = s.maxBet ? String(s.maxBet) : '';
+    }
+    $('fModeNote').textContent = FB_NOTE[sel.value] || '';
+    const s = j.settings, st = j.stats, box = $('fStats'); box.replaceChildren();
+    [
+      ['Football now', !s.enabled ? 'LOCKED' : (s.virtual ? 'Virtual open' : 'Virtual locked') + ' · ' + (s.real ? 'Real open' : 'Real locked')],
+      ['Live betting', s.live ? 'On' : 'Off'],
+      ['Difficulty', j.modes[s.mode].label],
+      ['Real tickets open', fmt(j.real.openBets)],
+      ['Total staked', '$' + fmt(st.staked)],
+      ['Total paid to players', '$' + fmt(st.paid)],
+      [st.houseNet >= 0 ? 'House is up' : 'House is down', '$' + fmt(Math.abs(st.houseNet))]
+    ].forEach(([k, v]) => { const d = el('div', 'stat'); d.append(el('span', 'stat-v', v), el('span', 'stat-k', k)); box.append(d); });
+    const api1 = j.real.on ? 'Odds API: on' + (j.real.credits ? ' · ' + fmt(j.real.credits.left) + ' credits left' : '') + (j.real.lastError ? ' · ' + j.real.lastError : '') : 'Odds API: OFF (set ODDS_API_KEY on the server to show real matches).';
+    const api2 = j.apiFootball.on ? 'Match info API: on' + (j.apiFootball.left != null ? ' · ' + fmt(j.apiFootball.left) + ' calls left today' : '') + (j.apiFootball.error ? ' · ' + j.apiFootball.error : '') : 'Match info API: OFF (set FOOTBALL_API_KEY for exact minutes, H2H and live statistics).';
+    $('fApi').textContent = api1 + '  ' + api2;
+  } catch (e) { if (e.message !== 'not_logged_in') say(e); }
+}
+$('fMode').addEventListener('change', () => { $('fModeNote').textContent = FB_NOTE[$('fMode').value] || ''; });
+$('fbForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    await api('/admin/api/football', 'POST', { enabled: $('fOn').value === '1', virtual: $('fVirt').value === '1', real: $('fReal').value === '1', live: $('fLive').value === '1', mode: $('fMode').value, minBet: $('fMin').value, maxBet: $('fMax').value });
+    toast('Football settings saved.'); loadFootball(true); loadActivity();
+  } catch (err) { say(err); }
+});
+setInterval(() => { if (!$('dashView').hidden && !document.hidden && !$('tab-football').hidden) loadFootball(); }, 8000);
 
 // ── activity ────────────────────────────────────────────────────
 const STATUS = { pending: 'Waiting for bot', sent: 'Sent to bot', done: 'Applied', failed: 'Failed', cancelled: 'Cancelled', expired: 'Expired' };
