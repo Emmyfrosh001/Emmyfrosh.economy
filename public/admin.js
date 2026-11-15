@@ -524,7 +524,7 @@ async function loadFootball(fillForm) {
       ['Total paid to players', '$' + fmt(st.paid)],
       [st.houseNet >= 0 ? 'House is up' : 'House is down', '$' + fmt(Math.abs(st.houseNet))]
     ].forEach(([k, v]) => { const d = el('div', 'stat'); d.append(el('span', 'stat-v', v), el('span', 'stat-k', k)); box.append(d); });
-    const api1 = j.real.on ? 'Odds API: on' + (j.real.credits ? ' · ' + fmt(j.real.credits.left) + ' credits left' : '') + (j.real.lastError ? ' · ' + j.real.lastError : '') : 'Odds API: OFF (set ODDS_API_KEY on the server to show real matches).';
+    const api1 = j.real.source === 'free' ? 'Real matches: free feed (no key, no limit) · ' + fmt(j.real.events) + ' matches · odds are calculated by the server' + (j.real.lastError ? ' · ' + j.real.lastError : '') : j.real.on ? 'Odds API: on' + (j.real.credits ? ' · ' + fmt(j.real.credits.left) + ' credits left' : '') + (j.real.lastError ? ' · ' + j.real.lastError : '') : 'Odds API: OFF (set ODDS_API_KEY on the server to show real matches).';
     const api2 = j.apiFootball.on ? 'Match info API: on' + (j.apiFootball.left != null ? ' · ' + fmt(j.apiFootball.left) + ' calls left today' : '') + (j.apiFootball.error ? ' · ' + j.apiFootball.error : '') : 'Match info API: OFF (set FOOTBALL_API_KEY for exact minutes, H2H and live statistics).';
     $('fApi').textContent = api1 + '  ' + api2;
   } catch (e) { if (e.message !== 'not_logged_in') say(e); }
