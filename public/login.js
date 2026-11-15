@@ -5,6 +5,7 @@ const ERR = {
   wrong_login: 'Wrong number or password.',
   too_many_attempts: 'Too many attempts. Wait 15 minutes.',
   banned: 'This account has been banned.',
+  frozen: 'Your account is frozen. Please message customer care to get it unfrozen.',
   not_verified: 'Almost there: confirm your number first. Send the .verify code to the bot on WhatsApp.',
   exists: 'This number already has an account. Log in instead. Forgot the password? Chat with customer care.',
   bad_number: 'Enter your full WhatsApp number with country code.',
@@ -61,9 +62,11 @@ $('loginForm').addEventListener('submit', async (e) => {
     await api('/shop/login', 'POST', { number: $('num').value, password: $('pw').value });
     $('pw').value = '';
     location.href = nextUrl();
-  } catch (err) { $('loginErr').textContent = ERR[err.message] || 'Could not log in.'; $('loginErr').hidden = false; }
+  } catch (err) { $('loginErr').textContent = ERR[err.message] || 'Could not log in.'; $('loginErr').hidden = false; $('careBtn').hidden = err.message !== 'frozen'; }
 });
 
 // /signup opens on the sign-up tab; already logged in? skip straight on
 if (location.pathname.replace(/\/$/, '') === '/signup') authMode(true);
 api('/shop/api/state').then(j => { if (j.me) location.replace(nextUrl()); }).catch(() => {});
+
+$('careBtn').onclick = () => { if (window.openSupportChat) window.openSupportChat('Hello, my account is frozen. Please help me.'); };
