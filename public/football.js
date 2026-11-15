@@ -344,7 +344,7 @@ function renderReal() {
   if (!MKTS.some(m => m.id === ui.mk && all.some(it => hasM(it.o, m)))) ui.mk = 'x';
   if (!all.length) {
     box.append(el('p', 'empty', R.updated ? 'No real matches to bet on in the next ' + (R.days || 7) + ' days. New fixtures appear here automatically.' : 'Loading real fixtures…'));
-    const why = (R.diag || []).map(d => d.lg + ': ' + (d.err || (d.n ? d.n + ' matches, odds not posted yet' : 'no matches'))).slice(0, 12);       // tells the owner WHY the list is empty
+    const why = (R.diag || []).slice().sort((a, b) => (b.err ? 1 : 0) - (a.err ? 1 : 0)).map(d => d.lg + ': ' + (d.err || (d.n ? d.n + ' matches, odds not posted yet' : 'no matches'))).slice(0, 45);       // tells the owner WHY the list is empty
     if (R.error) why.unshift('Match feed says: ' + R.error);
     if (why.length) { const w = el('div', 'empty'); why.forEach(t => w.append(el('div', '', '• ' + t))); box.append(w); }
     return;
