@@ -422,15 +422,24 @@ async function loadCode(code) {
 }
 $('codeForm').onsubmit = (e) => { e.preventDefault(); loadCode($('codeIn').value); };
 $('codeFormV').onsubmit = (e) => { e.preventDefault(); loadCode($('codeInV').value); };
+function showBook(code, snap, odds) {                                  // the booking-code card (like SportyBet's)
+  const d = new Date(), z = (n) => String(n).padStart(2, '0');
+  $('bkDate').textContent = z(d.getDate()) + '/' + z(d.getMonth() + 1) + '/' + d.getFullYear() + ' ' + z(d.getHours()) + ':' + z(d.getMinutes());
+  $('bkCode').textContent = code; $('bkOdds').textContent = odds.toFixed(2); $('bkPay').textContent = (100 * odds).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const box = $('bkSels'); box.replaceChildren();
+  snap.forEach(s => { const r = el('div', 'bk-sel'), t = el('div', 'bk-s1'); t.append(el('b', '', s.pick), el('b', '', s.odd.toFixed(2))); r.append(t, el('span', '', s.t), el('span', 'mk', s.mk)); box.append(r); });
+  $('bkAct').replaceChildren(...codeButtons(code)); if (!$('bookDlg').open) $('bookDlg').showModal();
+}
+$('bkClose').onclick = () => $('bookDlg').close();
 $('mkCode').onclick = async () => {
-  const real = slipMode === 'r', p = cur(), out = $('codeOut'); if (!Object.keys(p).length) return;
+  const real = slipMode === 'r', p = cur(); if (!Object.keys(p).length) return;
+  const snap = Object.keys(p).map(m => ({ t: legInfo(m).t, pick: pName(p[m].k, p[m].i), mk: mName(p[m].k), odd: p[m].odd }));
   try {
     const body = real ? { picks: Object.keys(p).map(e => ({ e, k: p[e].k, i: p[e].i })) } : { round: S.nextId, picks: Object.keys(p).map(m => ({ m: +m, k: p[m].k, i: p[m].i })) };
     const r = await fetch(real ? '/football/real/code' : '/football/code', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok || j.ok === false) { $('msg').textContent = errText(j.error); return; }
-    out.replaceChildren(); out.hidden = false;
-    out.append(el('span', 's-muted', 'Booking code'), el('b', '', j.code), ...codeButtons(j.code));
+    showBook(j.code, snap, total());
   } catch { $('msg').textContent = 'No connection. Try again.'; }
 };
 
@@ -549,7 +558,7 @@ function renderSlip() {
   const box = $('sels'), p = cur(); box.replaceChildren();
   const ed = editing && (editing.real === (slipMode === 'r')) ? editing : null;
   $('slipTitle').textContent = (ed ? 'Edit ticket #' + String(ed.id).slice(0, 6).toUpperCase() : 'Betslip') + (slipMode === 'r' ? ' · Real matches' : ' · Round ' + (NX ? NX.id : ''));
-  $('place').textContent = ed ? 'Save changes' : 'Place bet';
+  $('placeT').textContent = ed ? 'Save changes' : 'Place Bet'; $('slipN').textContent = String(slipCount());
   $('liveNote').hidden = !(slipMode === 'r' && Object.keys(p).some(e => { const ev = R && R.events.find(x => x.id === e); return ev && Date.now() + roff >= ev.t; }));
   lockedList().forEach(e => {                                         // started games: shown, cannot be removed
     const L = editing.locked[e], row = el('div', 'sel locked'), l = el('div'), r = el('div');
@@ -557,17 +566,20 @@ function renderSlip() {
     r.append(el('b', '', L.odd.toFixed(2))); row.append(l, r); box.append(row);
   });
   Object.keys(p).forEach(m => {
-    const row = el('div', 'sel'), l = el('div'), r = el('div');
-    l.append(el('b', '', legInfo(m).t), el('span', '', mName(p[m].k) + ' · ' + pName(p[m].k, p[m].i)));
-    const rm = el('button', '', 'Remove'); rm.type = 'button';
-    rm.onclick = () => { delete p[m]; slipMode === 'r' ? renderReal() : renderList(); renderBtn(); slipCount() ? renderSlip() : $('slip').close(); };
-    r.append(el('b', '', p[m].odd.toFixed(2)), document.createElement('br'), rm); row.append(l, r); box.append(row);
+    const row = el('div', 'sel'), x = el('button', 'sx', '✕'), body = el('div', 'sb'), top = el('div', 'st1');
+    x.type = 'button'; x.setAttribute('aria-label', 'Remove');
+    x.onclick = () => { delete p[m]; slipMode === 'r' ? renderReal() : renderList(); renderBtn(); slipCount() ? renderSlip() : $('slip').close(); };
+    top.append(el('b', '', pName(p[m].k, p[m].i)), el('b', 'od', p[m].odd.toFixed(2)));
+    body.append(top, el('span', '', legInfo(m).t), el('span', 'mk', mName(p[m].k)));
+    row.append(x, body); box.append(row);
   });
   $('mkCode').hidden = !Object.keys(p).length || !!ed;
   $('tot').textContent = total().toFixed(2);
   $('win').textContent = fmt(Math.floor(parseAmt($('stake').value) * total()));
+  $('payNote').textContent = 'About to pay ' + fmt(parseAmt($('stake').value));
 }
 $('open').onclick = () => { $('msg').textContent = ''; $('codeOut').hidden = true; renderSlip(); $('slip').showModal(); };
+$('slipClear').onclick = () => { const p = cur(); Object.keys(p).forEach(k => delete p[k]); slipMode === 'r' ? renderReal() : renderList(); renderBtn(); $('slip').close(); };
 $('close').onclick = () => $('slip').close();
 $('stake').oninput = renderSlip;
 document.querySelectorAll('.chips [data-set]').forEach(b => b.onclick = () => {
@@ -770,9 +782,9 @@ if (/^#code=/i.test(location.hash)) { setTab('r'); loadCode(location.hash.slice(
 // ── the round booking-code / betslip button (like SportyBet) ──
 $('fab').onclick = () => {
   const real = tab !== 'v'; $('codeFormV').hidden = real; $('codeForm').hidden = !real;
-  $('cdSlip').hidden = !slipCount(); $('codeDlg').showModal(); setTimeout(() => $(real ? 'codeIn' : 'codeInV').focus(), 50);
+  if (slipCount()) { $('open').onclick(); return; }                    // picks on the slip: go straight to the betslip (no code box)
+  $('codeDlg').showModal(); setTimeout(() => $(real ? 'codeIn' : 'codeInV').focus(), 50);
 };
 $('codeClose').onclick = () => $('codeDlg').close();
 ['codeForm', 'codeFormV'].forEach(id => $(id).addEventListener('submit', () => $('codeDlg').close()));
-$('cdSlip').onclick = () => { $('codeDlg').close(); if (!$('open').disabled) $('open').click(); };
 renderBtn();
