@@ -21,7 +21,7 @@ function icon(name) {
 }
 // one coloured tile:  [label, value, colour, icon, extra class]
 function tile([k, v, color, ic, extra]) {
-  const d = el('div', 'tile c-' + color + (extra ? ' ' + extra : '') + (String(v).length > 8 && !(extra || '').includes('long') ? ' long' : ''));
+  const d = el('div', 'tile c-' + color + (extra ? ' ' + extra : '') + (String(v).length > 11 ? ' xl' : String(v).length > 8 && !(extra || '').includes('long') ? ' long' : ''));
   const t = el('div', 't-txt');
   t.append(el('span', 'stat-v', v), el('span', 'stat-k', k));
   d.append(icon(ic), t);
