@@ -137,6 +137,7 @@ document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () =>
   if (b.dataset.tab === 'activity') loadActivity();
   if (b.dataset.tab === 'game') loadGame(true);
   if (b.dataset.tab === 'football') loadFootball(true);
+  if (b.dataset.tab === 'slots') loadSlots(true);
 }));
 
 function refreshAll() { loadOverview(); loadUsers(); loadMarket(); loadCoupons(); loadActivity(); loadChats(); }
@@ -552,6 +553,45 @@ $('gReset').addEventListener('click', async () => {
   try { await api('/admin/api/game/reset-stats', 'POST'); toast('Totals reset.'); loadGame(); } catch (err) { say(err); }
 });
 setInterval(() => { if (!$('dashView').hidden && !document.hidden && !$('tab-game').hidden) loadGame(); }, 5000);
+
+// ── slots ────────────────────────────────────────────────────────
+async function loadSlots(fillForm) {
+  try {
+    const j = await api('/admin/api/slots'), sel = $('sDiff');
+    if (!sel.options.length) Object.entries(j.difficulties).forEach(([k, v]) => sel.append(new Option(`${v.label} (pays back ${Math.round(v.rtp * 100)}%)`, k)));
+    if (fillForm) {
+      $('sOn').value = j.settings.enabled ? '1' : '0';
+      sel.value = j.settings.difficulty;
+      $('sMin').value = String(j.settings.minBet);
+      $('sMax').value = j.settings.maxBet ? String(j.settings.maxBet) : '';
+    }
+    const d = j.difficulties[sel.value];
+    $('sDiffNote').textContent = d ? `${d.label}: over time players get back about ${Math.round(d.rtp * 100)}% of what they stake, the house keeps about ${100 - Math.round(d.rtp * 100)}%. A new difficulty starts with the next spin.` : '';
+    const st = j.stats, cur = j.difficulties[j.settings.difficulty];
+    fillTiles($('sStats'), [
+      ['Spins played', fmt(st.spins), 'blue', 'slots'],
+      ['Total staked', '$' + fmt(st.staked), 'green', 'dollar'],
+      ['Total paid to players', '$' + fmt(st.paid), 'purple', 'coins'],
+      [st.houseNet >= 0 ? 'House is up' : 'House is down', '$' + fmt(Math.abs(st.houseNet)), 'yellow', 'house'],
+      ['Mode now', (cur ? cur.label : '') + (j.settings.enabled ? '' : ' (CLOSED)'), j.settings.enabled ? 'green' : 'red', 'target', 'long'],
+      ['Stake limits', '$' + fmt(j.settings.minBet) + ' – ' + (j.settings.maxBet ? '$' + fmt(j.settings.maxBet) : 'no limit'), 'blue', 'coins', 'long']
+    ]);
+  } catch (e) { if (e.message !== 'not_logged_in') say(e); }
+}
+$('sDiff').addEventListener('change', () => loadSlots(false));
+$('slotsForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    await api('/admin/api/slots', 'POST', { difficulty: $('sDiff').value, enabled: $('sOn').value === '1', minBet: $('sMin').value, maxBet: $('sMax').value });
+    toast('Slots settings saved. A new difficulty starts with the next spin.');
+    loadSlots(true); loadActivity();
+  } catch (err) { say(err); }
+});
+$('sReset').addEventListener('click', async () => {
+  if (!confirm('Reset the staked / paid totals to zero? Player wallets are not touched.')) return;
+  try { await api('/admin/api/slots/reset-stats', 'POST'); toast('Totals reset.'); loadSlots(); } catch (err) { say(err); }
+});
+setInterval(() => { if (!$('dashView').hidden && !document.hidden && !$('tab-slots').hidden) loadSlots(); }, 6000);
 
 // ── football (virtual TV + real matches) ─────────────────────────
 const FB_NOTE = {
