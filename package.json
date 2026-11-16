@@ -4,7 +4,7 @@
   "description": "Coupon API + public leaderboard + admin dashboard for the WhatsApp economy bot",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "node boot.js",
     "setup": "node setup.js"
   },
   "engines": {
