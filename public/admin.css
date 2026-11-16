@@ -93,7 +93,7 @@ body.admin .tabs { display: grid; gap: 10px; flex: none; }
   border: 1.5px solid var(--n-line); background: var(--n-card); box-shadow: var(--n-glow);
 }
 .tabs-mid { grid-template-columns: repeat(4, 1fr); }
-.tabs-low { grid-template-columns: 1fr 1fr; }
+.tabs-low { grid-template-columns: 1fr 1fr 1.3fr; }
 
 body.admin .tab, .tab-out {
   position: relative; display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 0;
@@ -118,6 +118,7 @@ body.admin .tab.on {
 .tab .t-users, .tab .t-chat, .tab .t-bars { color: #3dc3ff; }
 .tab .t-cart { color: #cfe6ff; }
 .tab .t-game { color: #bfe0ff; }
+.tab .t-slots { color: #ffd23c; }
 .tab.on .ic { color: #fff; }
 .tab-out { color: #fff; }
 .tab-out .ic { font-size: 1.9rem; filter: drop-shadow(0 0 6px rgba(255, 59, 78, .7)); }
