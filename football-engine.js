@@ -730,7 +730,7 @@ module.exports = function createFootball(opts) {
         } catch (x) { real.lastError = String(x.message || x).slice(0, 120); }
       }
       settleBets();
-      const cut = now - 14 * 86400000, live = new Set(real.bets.filter(b => b.status === 'open').flatMap(b => b.picks.map(p => p.e)));
+      const cut = now - 5 * 86400000, live = new Set(real.bets.filter(b => b.status === 'open').flatMap(b => b.picks.map(p => p.e)));
       for (const [id, ev] of Object.entries(real.events)) if (!live.has(id) && ev.t < now - 86400000) { delete real.events[id]; touch(); }
       if (real.bets.length > 3000 || real.bets.some(b => b.status !== 'open' && b.done < cut)) { real.bets = real.bets.filter(b => b.status === 'open' || b.done >= cut).slice(-3000); touch(); }
     } finally { scoring = false; }
