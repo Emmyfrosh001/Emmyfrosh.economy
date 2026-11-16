@@ -41,6 +41,7 @@
     <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10.5"/><path d="M12 6v6.4l4.2 2.5" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-ticket" viewBox="0 0 24 24"><path d="M2 6h20v4a2.2 2.2 0 0 0 0 4v4H2v-4a2.2 2.2 0 0 0 0-4z"/><path d="M9.5 6v12" stroke="#06143d" stroke-width="1.5" stroke-dasharray="2 2" opacity=".6"/></symbol>
     <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 1.6 3.4 4.8v6.4c0 5 3.5 9.2 8.6 11.2 5.1-2 8.6-6.2 8.6-11.2V4.8z"/><path d="m8.4 8.6 7.2 7.2M15.6 8.6l-7.2 7.2" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-slots" viewBox="0 0 24 24"><path d="M3 3h15a2 2 0 0 1 2 2v16a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><rect x="5.2" y="6" width="4" height="7" rx="1" fill="#06143d" opacity=".55"/><rect x="10" y="6" width="4" height="7" rx="1" fill="#06143d" opacity=".55"/><rect x="14.8" y="6" width="3" height="7" rx="1" fill="#06143d" opacity=".55"/><path d="M7.2 8.2v2.6M12 8.2v2.6M16.3 8.2v2.6" stroke="#ffd23c" stroke-width="1.6" stroke-linecap="round"/><rect x="5.2" y="15.5" width="12.6" height="3.2" rx="1" fill="#06143d" opacity=".35"/><path d="M21.4 6.5v6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="21.4" cy="5.6" r="1.7" fill="#ff3b4e"/></symbol>
     <symbol id="i-whistle" viewBox="0 0 24 24"><path d="M3 9h11.2a7 7 0 1 1-5.6 11.2L3 14.5z"/><circle cx="14.8" cy="15" r="2.4" fill="#06143d" opacity=".4"/></symbol>
   </svg>
 
@@ -87,6 +88,7 @@
       </div>
       <div class="tabs tabs-low">
         <button class="tab" data-tab="activity" role="tab"><svg class="ic t-bars" aria-hidden="true"><use href="#i-bars"/></svg><span>Activity</span></button>
+        <button class="tab" data-tab="slots" role="tab"><svg class="ic t-slots" aria-hidden="true"><use href="#i-slots"/></svg><span>Slots</span></button>
         <button class="tab-out" id="signout" type="button"><svg class="ic" aria-hidden="true"><use href="#i-tag"/></svg><span>Sign out</span></button>
       </div>
     </nav>
@@ -340,6 +342,43 @@
               <button type="submit" class="btn save wide"><svg class="ic" aria-hidden="true"><use href="#i-save"/></svg>Save Settings</button>
             </form>
             <p class="hint" id="fApi"></p>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-slots" class="panel" hidden>
+        <div class="card">
+          <div class="card-head">
+          <svg class="ic h-ic" aria-hidden="true"><use href="#i-slots"/></svg>
+          <h2>Slots Overview</h2>
+          <button class="card-toggle" type="button" aria-expanded="true" aria-label="Collapse Slots Overview"><svg class="ic" aria-hidden="true"><use href="#i-chev"/></svg></button>
+        </div>
+          <div class="card-body">
+            <div class="stats tiles" id="sStats"></div>
+            <div class="tip"><span class="tip-ic"><svg class="ic" aria-hidden="true"><use href="#i-bulb"/></svg></span><p>Close or open the slot machine, pick Easy, Normal or Hard, and set the smallest and biggest stake. Spins already played are still paid.</p></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+          <svg class="ic h-ic" aria-hidden="true"><use href="#i-gear"/></svg>
+          <h2>Slots Settings</h2>
+          <button class="card-toggle" type="button" aria-expanded="true" aria-label="Collapse Slots Settings"><svg class="ic" aria-hidden="true"><use href="#i-chev"/></svg></button>
+        </div>
+          <div class="card-body">
+            <form id="slotsForm" class="settings" autocomplete="off">
+              <div class="field f-on"><label for="sOn"><svg class="ic" aria-hidden="true"><use href="#i-slots"/></svg>Slots</label>
+                <div class="sel"><span class="dot" aria-hidden="true"></span><select id="sOn"><option value="1">OPEN  –  Players can spin</option><option value="0">CLOSED  –  Nobody can spin</option></select></div></div>
+              <div class="field"><label for="sDiff"><svg class="ic" aria-hidden="true"><use href="#i-target"/></svg>Difficulty</label>
+                <div class="sel"><select id="sDiff"></select></div></div>
+              <div class="field"><label for="sMin"><svg class="ic" aria-hidden="true"><use href="#i-coins"/></svg>Smallest stake</label>
+                <input id="sMin" type="text" inputmode="text" placeholder="1, 100, 1k"></div>
+              <div class="field"><label for="sMax"><svg class="ic" aria-hidden="true"><use href="#i-coins"/></svg>Biggest stake (empty = no limit)</label>
+                <input id="sMax" type="text" inputmode="text" placeholder="no limit, 50k, 1m"></div>
+              <p class="hint wide" id="sDiffNote"></p>
+              <button type="submit" class="btn save wide"><svg class="ic" aria-hidden="true"><use href="#i-save"/></svg>Save Settings</button>
+            </form>
+            <p><button id="sReset" class="btn small ghost" type="button">Reset totals</button></p>
           </div>
         </div>
       </section>
