@@ -14,12 +14,30 @@ try {
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+// Clean up the usual copy/paste mistakes in MONGO_URL and say what is wrong.
+function cleanMongoUrl(raw) {
+  let u = String(raw || '').trim();
+  u = u.replace(/^MONGO_URL\s*=\s*/i, '').replace(/^mongosh\s+/i, '').trim();   // pasted "MONGO_URL=..." or the "mongosh ..." command
+  u = u.replace(/^["'`]+|["'`]+$/g, '').trim();                                    // quotes around it
+  const m = u.match(/mongodb(?:\+srv)?:\/\/\S+/i);                                    // anything else around it
+  if (m) u = m[0].replace(/["'`]+$/g, '');
+  return u;
+}
+
 (async () => {
-  if (!String(process.env.MONGO_URL || '').trim()) {
-    console.warn('⚠️  MONGO_URL is not set: bans, bets and accounts are only kept on this server\'s disk and are lost on a Render restart.');
+  const given = String(process.env.MONGO_URL || '').trim();
+  const url = cleanMongoUrl(given);
+  let problem = '';
+  if (!given) problem = 'MONGO_URL is not set.';
+  else if (!/^mongodb(\+srv)?:\/\//i.test(url)) problem = 'MONGO_URL is not a MongoDB link. It must start with mongodb+srv:// (or mongodb://). What Render has starts with: "' + given.slice(0, 12).replace(/[^\x20-\x7e]/g, '?') + '…"';
+  else if (/[<>]/.test(url)) problem = 'MONGO_URL still has <password> (or another <…> placeholder) in it. Replace it with your real database password, without the < > signs.';
+  if (problem) {
+    console.warn('⚠️  ' + problem);
+    console.warn('⚠️  Starting WITHOUT MongoDB: bans, bets and accounts are only kept on this server\'s disk and are lost on a restart. Fix MONGO_URL in Render → Environment and redeploy.');
     require('./server');
     return;
   }
+  process.env.MONGO_URL = url;
   const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const store = require('./mongo-store').create(DATA_DIR);
