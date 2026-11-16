@@ -55,11 +55,36 @@ for (const k of ['shop', 'coins', 'listings']) if (!Array.isArray(db.market[k]))
 for (const k of ['adjustments', 'audit', 'jobs']) if (!Array.isArray(db[k])) db[k] = [];
 if (!db.chats || typeof db.chats !== 'object') db.chats = {};   // live chat: visitors <-> customer care
 if (!Array.isArray(db.transfers)) db.transfers = [];            // player -> player money transfers made on the site
+if (!Array.isArray(db.gameAdj)) db.gameAdj = [];                // crash-plane wallet settlements waiting for the bot
+for (const k of ['blocked', 'frozen', 'removed']) if (!db[k] || typeof db[k] !== 'object' || Array.isArray(db[k])) db[k] = {};
+//   db.blocked[number] = banned numbers: no login, no new account, off the leaderboard
+//   db.frozen[number]  = frozen accounts: no login until the player talks to customer care
+//   db.removed[botId]  = players the admin removed ("start fresh"): hidden until the bot confirms the reset
 
 function save() {
   const tmp = DB_FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(db));
   fs.renameSync(tmp, DB_FILE);
+}
+// ── history clean-up: finished transactions are kept for 5 days, then deleted ──
+// Only FINISHED records (done / failed / cancelled / expired) that are older than 5 days go.
+// Anything still waiting for the bot (pending, sent, debiting, crediting, refunding) is never touched.
+const KEEP_HISTORY_MS = 5 * 86400000;
+const FINISHED = new Set(['done', 'failed', 'cancelled', 'expired']);
+const expired = (x, now) => {
+  if (!x || !FINISHED.has(x.status)) return false;
+  const t = x.doneAt || x.sentAt || x.createdAt || 0;
+  return t > 0 && now - t > KEEP_HISTORY_MS;
+};
+function pruneHistory() {
+  const now = Date.now();
+  let gone = 0;
+  for (const k of ['jobs', 'adjustments', 'gameAdj', 'transfers']) {
+    const keep = db[k].filter(x => !expired(x, now));
+    gone += db[k].length - keep.length;
+    db[k] = keep;
+  }
+  if (gone) { save(); console.log('🧹 removed ' + gone + ' finished transaction record(s) older than 5 days'); }
 }
 function addAudit(by, action, detail) {
   db.audit.unshift({ at: Date.now(), by, action, detail });
@@ -120,6 +145,8 @@ setInterval(() => {
   for (const [k, s] of usessions) if (s.exp < now) usessions.delete(k);
   for (const [k, c] of Object.entries(db.chats)) if (now - c.updatedAt > 30 * 86400000) delete db.chats[k];
 }, 120000).unref();
+setInterval(() => { try { pruneHistory(); } catch (e) { console.error('history clean-up failed:', e.message); } }, 3600000).unref();
+setTimeout(() => { try { pruneHistory(); } catch (e) { console.error('history clean-up failed:', e.message); } }, 30000).unref();
 
 function httpError(status, msg) { const e = new Error(msg); e.status = status; return e; }
 
@@ -241,6 +268,39 @@ function newJob(fields) {
   return j;
 }
 
+// ── remove / ban / freeze ───────────────────────────────────────
+const numOfId = (id) => last10(String(id || '').split('@')[0]);           // bot id → WhatsApp number (last 10 digits)
+const accOfId = (id) => Object.values(db.accounts).find(a => a.jid === id) || null;
+const numberFor = (id) => { const a = accOfId(id); return a ? a.number : numOfId(id); };
+// a player the leaderboard must not show: removed by the admin, or banned
+const hiddenId = (id) => !!db.removed[id] || !!db.blocked[numberFor(id)];
+const accountOk = (acc) => !!acc && !acc.banned && !db.blocked[acc.number] && !db.frozen[acc.number];
+function dropSignups(number) { for (const [c, sg] of Object.entries(db.signups)) if (sg.number === number) delete db.signups[c]; }
+function banNumber(number, banned, id, name, by) {
+  const acc = db.accounts[number] || null;
+  if (banned) {
+    db.blocked[number] = { at: Date.now(), by, id: (acc && acc.jid) || id || '', name: String(name || (acc && acc.name) || 'Player').slice(0, 60) };
+    killSessions(number); dropSignups(number);
+  } else delete db.blocked[number];
+  if (acc) {
+    acc.banned = !!banned;
+    newJob({ type: 'acct_ban', user: acc.jid, number, banned: !!banned, by });
+  }
+}
+function freezeNumber(number, frozen, name, by) {
+  if (frozen) { db.frozen[number] = { at: Date.now(), by, name: String(name || 'Player').slice(0, 60) }; killSessions(number); }
+  else delete db.frozen[number];
+}
+function removePlayer(id, name, by) {                                   // "start fresh": nobody ever existed
+  const number = numberFor(id), acc = accOfId(id);
+  if (acc) { killSessions(acc.number); delete db.accounts[acc.number]; newJob({ type: 'acct_del', user: acc.jid, number: acc.number, by }); }
+  dropSignups(number); delete db.logins[number]; delete db.frozen[number];
+  delete db.users[id]; delete db.balances[id];
+  const job = newJob({ type: 'player_reset', user: id, number, by, userName: name });   // the bot wipes money, level, items
+  db.removed[id] = { at: Date.now(), by, name: String(name || 'Player').slice(0, 60), job: job.id, number };
+  return job;
+}
+
 // ── wallet + transfers ──────────────────────────────────────────
 // find a player by WhatsApp number (last 10 digits) or by the bot's id. Looks in the
 // fast balance feed first, then in the leaderboard feed, so the wallet is never blank.
@@ -250,6 +310,31 @@ function findPlayer(key, jid) {
   if (key && key.length >= 7) for (const src of srcs) for (const id of Object.keys(src)) if (last10(id) === key) return { jid: id, w: src[id] };
   return null;
 }
+// a player's inventory as the bot sends it. Accepts {key: qty}, {key: {qty}}, [{name|key|item|id, qty|count|quantity|amount}] or ["key", ...]
+const INV_FIELDS = ['inv', 'inventory', 'items', 'bag', 'backpack', 'assets'];
+function pickInv(o) { if (o) for (const f of INV_FIELDS) if (o[f] !== undefined && o[f] !== null) return o[f]; return undefined; }
+function itemName(k) {
+  k = String(k || '');
+  const m = db.market || {};
+  const hit = [...(m.shop || []), ...(m.coins || [])].find(x => x.key === k || x.name === k);
+  if (hit) return hit.name;
+  return /^[a-z0-9_]+$/.test(k) ? k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : k;
+}
+function normInv(v) {
+  let rows = [];
+  if (Array.isArray(v)) rows = v.map(x => (typeof x === 'string' ? { name: x, qty: 1 } : x));
+  else if (v && typeof v === 'object') rows = Object.entries(v).map(([k, q]) => (q && typeof q === 'object' ? { ...q, name: q.name || k } : { name: k, qty: q }));
+  const out = [];
+  for (const x of rows.slice(0, 200)) {
+    if (!x) continue;
+    const raw = x.name || x.key || x.item || x.id;
+    const q = x.qty ?? x.count ?? x.quantity ?? x.amount ?? x.owned ?? x.n;
+    const qty = Math.floor(Number(q));
+    const name = itemName(raw).slice(0, 60);
+    if (name && Number.isFinite(qty) && qty > 0) out.push({ name, qty: Math.min(qty, 1e15) });
+  }
+  return out;
+}
 function queueAdj(user, name, op, amount, t, leg, field) {
   db.adjustments.unshift({
     id: crypto.randomBytes(6).toString('hex'), user, name: String(name || 'Player').slice(0, 60),
@@ -257,6 +342,31 @@ function queueAdj(user, name, op, amount, t, leg, field) {
   });
   if (db.adjustments.length > 1000) db.adjustments.length = 1000;
 }
+// crash-plane: the game sends ONE net add/remove per player to the bot (same pending/ack road as every other money edit)
+function queueGameAdj(jid, name, op, amount) {
+  const a = {
+    id: crypto.randomBytes(6).toString('hex'), user: jid, name: String(name || 'Player').slice(0, 60),
+    field: 'balance', op, amount, status: 'pending', createdAt: Date.now(), by: 'game', game: true
+  };
+  db.gameAdj.unshift(a);
+  if (db.gameAdj.length > 300) db.gameAdj = db.gameAdj.filter((x, i) => i < 300 || OPEN(x));
+  return a;
+}
+// the bot has answered a game settlement: keep the site's copy of the wallet in step with it
+function gameAcked(a, ok, r) {
+  if (ok) {
+    const told = Number.isFinite(Number(r && r.balance));
+    for (const src of [db.balances, db.users]) {
+      if (!src[a.user]) continue;
+      if (told) src[a.user].balance = Math.floor(Number(r.balance));
+      else src[a.user].balance = Math.max(0, (src[a.user].balance || 0) + (a.op === 'add' ? a.amount : -a.amount));
+    }
+  }
+  aviator.onAck(a.id);
+  football.onAck(a.id);
+  slots.onAck(a.id);
+}
+
 // the bot reports each leg of a transfer: take the money first, give it only after that worked
 function transferLeg(a, ok, r) {
   const t = db.transfers.find(x => x.id === a.transferId);
@@ -280,6 +390,69 @@ function transferLeg(a, ok, r) {
   }
 }
 
+// ── MongoDB peek (admin only): shows how the bot's database is laid out, hiding secrets and phone numbers ──
+const pkMask = (v) => String(v).replace(/\d{7,}/g, d => '•'.repeat(d.length - 3) + d.slice(-3)).slice(0, 24);
+function pkDescribe(v, depth = 0) {
+  if (v === null || v === undefined) return 'null';
+  if (typeof v === 'number') return 'number (' + v + ')';
+  if (typeof v === 'boolean') return 'boolean';
+  if (typeof v === 'string') return 'text (' + pkMask(v) + ')';
+  if (v instanceof Date) return 'date';
+  if (Array.isArray(v)) {
+    if (!v.length) return 'list (empty)';
+    if (depth >= 3) return 'list (' + v.length + ' items)';
+    return 'list of ' + v.length + ': [ ' + v.slice(0, 2).map(x => pkDescribe(x, depth + 1)).join(', ') + (v.length > 2 ? ', …' : '') + ' ]';
+  }
+  if (typeof v === 'object') {
+    if (v._bsontype) return String(v._bsontype);
+    const keys = Object.keys(v);
+    if (depth >= 3) return 'object (' + keys.length + ' keys)';
+    return '{ ' + keys.slice(0, 25).map(k => pkMask(k) + ': ' + pkDescribe(v[k], depth + 1)).join(', ') + (keys.length > 25 ? ', …' : '') + ' }';
+  }
+  return typeof v;
+}
+// up to 6 Mongo URLs: MONGO_URL, MONGO_URL_2 … MONGO_URL_6 (when one cluster is full the next one is used)
+function mongoUrls() {
+  return ['MONGO_URL', 'MONGO_URL_2', 'MONGO_URL_3', 'MONGO_URL_4', 'MONGO_URL_5', 'MONGO_URL_6']
+    .map((k, i) => ({ n: i + 1, key: k, url: String(process.env[k] || '').trim() })).filter(x => x.url);
+}
+async function peekOne(MongoClient, c) {
+  const out = ['=== MONGO #' + c.n + ' (' + c.key + ') ==='];
+  const client = new MongoClient(c.url, { serverSelectionTimeoutMS: 10000 });
+  try {
+    await client.connect();
+    let names;
+    try { names = (await client.db().admin().listDatabases()).databases.map(d => d.name).filter(n => !['admin', 'local', 'config'].includes(n)); }
+    catch { names = [client.db(process.env.MONGO_DB || undefined).databaseName]; }
+    for (const name of names.slice(0, 10)) {
+      const mdb = client.db(name);
+      out.push('DATABASE: ' + name);
+      try {
+        const st = await mdb.command({ dbStats: 1, scale: 1048576 });
+        out.push('  size: ' + Math.round(st.dataSize) + ' MB of data, ' + Math.round(st.storageSize) + ' MB stored (Atlas free plan limit: 512 MB)');
+      } catch {}
+      for (const col of (await mdb.listCollections().toArray()).slice(0, 40)) {
+        const cc = mdb.collection(col.name);
+        out.push('  COLLECTION: ' + col.name + ' (' + (await cc.estimatedDocumentCount()) + ' documents)');
+        const doc = await cc.findOne({});
+        if (doc) out.push('    example: ' + pkDescribe(doc));
+      }
+    }
+    if (!names.length) out.push('Connected, but no databases were found.');
+  } catch (e) {
+    out.push('Could not connect: ' + String(e.message).replace(/\/\/[^@\s]*@/g, '//***@'));
+  } finally { client.close().catch(() => {}); }
+  return out.join('\n');
+}
+async function mongoPeek() {
+  const list = mongoUrls();
+  if (!list.length) return 'No Mongo URL is set.\nOn Render: your service → Environment → add MONGO_URL (and MONGO_URL_2 … MONGO_URL_6 if you have more) → Save → wait for the redeploy → open this page again.';
+  let MongoClient;
+  try { ({ MongoClient } = require('mongodb')); }
+  catch { return 'The "mongodb" package is not installed. Make sure package.json (the new one) is uploaded and redeploy so Render runs npm install.'; }
+  return (await Promise.all(list.map(c => peekOne(MongoClient, c)))).join('\n\n');
+}
+
 // ── routing ─────────────────────────────────────────────────────
 const FIELDS = ['balance', 'bank', 'gams'];
 const OPS    = ['add', 'remove', 'set'];
@@ -293,6 +466,13 @@ async function route(req, res) {
   const ip = clientIp(req);
 
   if (req.method === 'GET' && p === '/healthz') return send(res, 200, { ok: true });
+
+  // ─────────── crash-plane game (live stream + bet / cash out) ───────────
+  if (p.startsWith('/aviator/')) return aviator.handle(req, res, p);
+  // ─────────── football TV (state + place bet) ───────────
+  if (p.startsWith('/football/')) return football.handle(req, res, p);
+  // ─────────── slot machine (state + spin) ───────────
+  if (p.startsWith('/slots/')) return slots.handle(req, res, p);
 
   // ─────────── bot → site (needs API key) ───────────
   const BOT = ['/coupon/create', '/coupon/redeem', '/api/sync', '/api/market/sync', '/api/verify', '/api/pending', '/api/ack'];
@@ -343,7 +523,9 @@ async function route(req, res) {
           balance: num0(u.balance), bank: num0(u.bank), gams: num0(u.gams),
           level: Math.max(1, num0(u.level)), job: String(u.job || 'Unemployed').slice(0, 40)
         };
+        if (pickInv(u) !== undefined) users[id].inv = normInv(pickInv(u));
       }
+      for (const id of Object.keys(db.removed)) delete users[id];       // removed players stay gone until the bot confirms the reset
       db.users = users;
       db.usersUpdatedAt = Date.now();
       save();
@@ -368,11 +550,12 @@ async function route(req, res) {
         for (const a of body.accounts.slice(0, 20000)) {
           const key = last10(a?.number);
           if (key.length < 7 || !/^s1\$[0-9a-f]{32}\$[0-9a-f]{128}$/.test(String(a.hash || ''))) continue;
+          if (db.removed[str(a.jid, 100)]) continue;
           acc[key] = { number: key, jid: str(a.jid, 100), hash: a.hash, name: str(a.name || 'Player', 60) };
         }
         for (const a of body.accounts.slice(0, 20000)) {
           const key = last10(a?.number);
-          if (acc[key]) acc[key].banned = !!a.banned;
+          if (acc[key]) acc[key].banned = !!a.banned || !!db.blocked[key];
         }
         // admin changes the bot has not applied yet still win for now
         for (const a of db.jobs.filter(x => OPEN(x) && String(x.type).startsWith('acct_')).reverse()) {
@@ -388,8 +571,12 @@ async function route(req, res) {
       }
       if (body.balances && typeof body.balances === 'object') {
         const bal = {};
-        for (const [jid, b] of Object.entries(body.balances).slice(0, 20000))
-          bal[jid.slice(0, 100)] = { balance: int(b?.balance), bank: int(b?.bank), level: Math.max(1, int(b?.level)), name: str(b?.name || 'Player', 60) };
+        for (const [jid, b] of Object.entries(body.balances).slice(0, 20000)) {
+          const k = jid.slice(0, 100);
+          if (db.removed[k]) continue;
+          bal[k] = { balance: int(b?.balance), bank: int(b?.bank), level: Math.max(1, int(b?.level)), name: str(b?.name || 'Player', 60) };
+          if (pickInv(b) !== undefined) bal[k].inv = normInv(pickInv(b));   // inventory, if the bot sends it
+        }
         db.balances = bal;
       }
       save();
@@ -404,6 +591,7 @@ async function route(req, res) {
       const who = last10(body.number);
       // the bot must tell us which WhatsApp number sent the code, and it must be the number that signed up
       if (!who || who !== sg.number) return send(res, 200, { ok: false, error: 'number_mismatch' });
+      if (db.blocked[sg.number]) { delete db.signups[code]; save(); return send(res, 200, { ok: false, error: 'banned' }); }
       return send(res, 200, { ok: true, number: sg.number, hash: sg.hash });
     }
 
@@ -418,6 +606,14 @@ async function route(req, res) {
           if (t && t.status === 'debiting') { t.status = 'failed'; t.error = 'bot_offline'; t.doneAt = now; }
           continue;
         }
+        const redeliver = a.status === 'sent' && now - (a.sentAt || 0) > 180000;
+        if (a.status === 'pending' || redeliver) {
+          a.status = 'sent'; a.sentAt = now;
+          jobs.push({ id: a.id, user: a.user, field: a.field, op: a.op, amount: a.amount });
+        }
+      }
+      for (const a of db.gameAdj) {
+        if (jobs.length >= 50) break;
         const redeliver = a.status === 'sent' && now - (a.sentAt || 0) > 180000;
         if (a.status === 'pending' || redeliver) {
           a.status = 'sent'; a.sentAt = now;
@@ -442,7 +638,7 @@ async function route(req, res) {
       const results = Array.isArray(body.results) ? body.results.slice(0, 100) : [];
       for (const r of results) {
         const id = String(r?.id);
-        const a = db.adjustments.find(x => x.id === id) || db.jobs.find(x => x.id === id);
+        const a = db.adjustments.find(x => x.id === id) || db.jobs.find(x => x.id === id) || db.gameAdj.find(x => x.id === id);
         if (!a || a.status === 'done' || a.status === 'cancelled') continue;
         a.status = r.ok ? 'done' : 'failed';
         a.doneAt = Date.now();
@@ -454,7 +650,9 @@ async function route(req, res) {
           a.balanceAfter = Math.floor(Number(r.balance));
           if (a.user && db.balances[a.user]) db.balances[a.user].balance = a.balanceAfter;
         }
+        if (a.type === 'player_reset' && r.ok) delete db.removed[a.user];   // wiped in the bot: they can play and appear again from zero
         if (a.transferId) transferLeg(a, !!r.ok, r);
+        if (a.game) gameAcked(a, !!r.ok, r);
       }
       save();
       return send(res, 200, { ok: true });
@@ -466,8 +664,9 @@ async function route(req, res) {
     if (hit('pub', ip, 120, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
     if (!PUBLIC_BOARD) return send(res, 200, { ok: true, hidden: true, top: [] });
     const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit'), 10) || 50));
-    const top = Object.values(db.users)
-      .map(u => ({ name: u.name, level: u.level, job: u.job, total: total(u) }))
+    const top = Object.entries(db.users)
+      .filter(([id]) => !hiddenId(id))
+      .map(([, u]) => ({ name: u.name, level: u.level, job: u.job, total: total(u) }))
       .filter(u => u.total > 0)
       .sort((a, b) => b.total - a.total)
       .slice(0, limit)
@@ -477,7 +676,7 @@ async function route(req, res) {
 
   if (req.method === 'GET' && p === '/api/public/stats') {
     if (hit('pub', ip, 120, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
-    const us = Object.values(db.users);
+    const us = Object.entries(db.users).filter(([id]) => !hiddenId(id)).map(([, u]) => u);
     return send(res, 200, {
       ok: true, siteName: SITE_NAME, players: us.length,
       totalMoney: us.reduce((s, u) => s + total(u), 0), updatedAt: db.usersUpdatedAt
@@ -549,7 +748,8 @@ async function route(req, res) {
       await new Promise(r => setTimeout(r, 400));
       return send(res, 401, { ok: false, error: 'wrong_login' });
     }
-    if (acc.banned) return send(res, 403, { ok: false, error: 'banned' });
+    if (acc.banned || db.blocked[key]) return send(res, 403, { ok: false, error: 'banned' });
+    if (db.frozen[key]) return send(res, 403, { ok: false, error: 'frozen' });   // right password, but frozen: they must message customer care
     db.logins[key] = Date.now();
     const sid = crypto.randomBytes(24).toString('base64url');
     usessions.set(sid, { user: key, exp: Date.now() + 12 * 3600000 });
@@ -565,6 +765,7 @@ async function route(req, res) {
     if (key.length < 10) return send(res, 400, { ok: false, error: 'bad_number' });
     if (pw.length < 6 || pw.length > 40 || /\s/.test(pw)) return send(res, 400, { ok: false, error: 'bad_password' });
     if (hit('usignumber', key, 4, 3600000)) return send(res, 429, { ok: false, error: 'too_many_attempts' });
+    if (db.blocked[key]) return send(res, 403, { ok: false, error: 'banned' });     // banned number: no new account, ever
     if (db.accounts[key]) return send(res, 409, { ok: false, error: 'exists' });
     if (Object.keys(db.signups).length > 5000) return send(res, 503, { ok: false, error: 'busy' });
     for (const [c, sg] of Object.entries(db.signups)) if (sg.number === key) delete db.signups[c];   // newest request wins
@@ -578,7 +779,7 @@ async function route(req, res) {
     if (hit('pub', ip, 240, 60000)) return send(res, 429, { ok: false, error: 'rate_limited' });
     const us = getSession(req, 'usid', usessions);
     let acc = us ? db.accounts[us.user] : null;
-    if (acc && acc.banned) acc = null;
+    if (!accountOk(acc)) acc = null;
     if (us && (!acc)) { usessions.delete(us.sid); }
     if (req.method !== 'GET' && req.headers['x-requested-with'] !== 'XMLHttpRequest')
       return send(res, 403, { ok: false, error: 'bad_request' });
@@ -600,7 +801,7 @@ async function route(req, res) {
           closedUntil: l.closedUntil > now ? l.closedUntil : 0, expiresAt: l.expiresAt,
           mine: !!(acc && l.seller_id && l.seller_id === acc.jid)
         })),
-        me: acc ? { name: (bal && bal.name) || acc.name, number: acc.number, balance: bal ? bal.balance : 0, bank: bal ? bal.bank : 0, level: bal ? bal.level : 1 } : null
+        me: acc ? { name: (bal && bal.name) || acc.name, number: acc.number, balance: bal ? bal.balance : 0, bank: bal ? bal.bank : 0, level: bal ? bal.level : 1, inventory: pl ? (Array.isArray(pl.w.inv) ? pl.w.inv : (Array.isArray((db.users[pl.jid] || {}).inv) ? db.users[pl.jid].inv : null)) : null } : null
       });
     }
 
@@ -617,7 +818,7 @@ async function route(req, res) {
       const fF = op === 'deposit' ? 'balance' : 'bank', tF = op === 'deposit' ? 'bank' : 'balance';
       if (db.transfers.some(t => t.from === me.jid && t.to === me.jid && t.status === 'debiting')) return send(res, 429, { ok: false, error: 'too_many_pending' });
       const committed = db.transfers.filter(t => t.from === me.jid && t.status === 'debiting' && (t.fromField || 'balance') === fF).reduce((s, t) => s + t.amount, 0);
-      const have = Math.max(0, (me.w[fF] || 0) - committed);
+      const have = Math.max(0, (me.w[fF] || 0) - committed - (fF === 'balance' ? aviator.hold(acc.number) + football.hold(acc.number) + slots.hold(acc.number) : 0));   // money staked in the games is not free to move
       const all = String(b.amount).toLowerCase() === 'all';
       const amount = all ? have : Number(String(b.amount ?? '').replace(/[,$\s]/g, ''));
       if (!Number.isInteger(amount) || amount < 1 || amount > 1e12) return send(res, 400, { ok: false, error: all ? 'nothing_to_move' : 'bad_amount' });
@@ -661,7 +862,7 @@ async function route(req, res) {
       if (to.jid === from.jid) return send(res, 400, { ok: false, error: 'self' });
       const open = db.transfers.filter(t => t.from === from.jid && t.status === 'debiting' && (t.fromField || 'balance') === 'balance');
       if (open.length >= 3) return send(res, 429, { ok: false, error: 'too_many_pending' });
-      const have = Math.max(0, (from.w.balance || 0) - open.reduce((s, t) => s + t.amount, 0));
+      const have = Math.max(0, (from.w.balance || 0) - open.reduce((s, t) => s + t.amount, 0) - aviator.hold(acc.number) - football.hold(acc.number) - slots.hold(acc.number));   // money staked in the games is not free to send
       if (amount > have) return send(res, 400, { ok: false, error: 'insufficient', need: amount, have });
       const t = {
         id: crypto.randomBytes(6).toString('hex'), owner: acc.number, toKey: key,
@@ -765,6 +966,13 @@ async function route(req, res) {
 
     if (p === '/admin/api/me') return send(res, 200, { ok: true, user: me, siteName: SITE_NAME });
 
+    // open /admin/api/mongo-peek in the browser while logged in to admin: plain text, safe to copy
+    if (p === '/admin/api/mongo-peek' && req.method === 'GET') {
+      const text = await mongoPeek();
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+      return res.end(text);
+    }
+
     if (p === '/admin/api/overview') {
       const us = Object.values(db.users);
       const cs = Object.values(db.coupons);
@@ -774,9 +982,10 @@ async function route(req, res) {
         totalMoney: us.reduce((s, u) => s + total(u), 0),
         activeCoupons: cs.filter(c => c.claims < c.maxClaims).length,
         couponValueLeft: cs.reduce((s, c) => s + c.amount * Math.max(0, c.maxClaims - c.claims), 0),
-        pendingEdits: db.adjustments.filter(OPEN).length + db.jobs.filter(a => OPEN(a) && a.type !== 'buy').length,
+        pendingEdits: db.adjustments.filter(OPEN).length + db.jobs.filter(a => OPEN(a) && a.type !== 'buy').length + db.gameAdj.filter(OPEN).length,
         accounts: Object.keys(db.accounts).length,
-        bannedAccounts: Object.values(db.accounts).filter(a => a.banned).length,
+        bannedAccounts: Object.keys(db.blocked).length,
+        frozenAccounts: Object.keys(db.frozen).length,
         ordersToday: db.jobs.filter(a => a.type === 'buy' && a.status === 'done' && a.doneAt > Date.now() - 86400000).length,
         marketUpdatedAt: db.market.updatedAt,
         usersUpdatedAt: db.usersUpdatedAt
@@ -788,13 +997,20 @@ async function route(req, res) {
       const page = Math.max(1, parseInt(url.searchParams.get('page'), 10) || 1);
       const per = 25;
       let list = Object.entries(db.users).map(([id, u]) => Object.assign({ id, total: total(u) }, u));
-      if (q) list = list.filter(u => u.name.toLowerCase().includes(q));
+      if (q) list = list.filter(u => u.name.toLowerCase().includes(q) || numberFor(u.id).includes(q.replace(/\D/g, '') || '\u0000'));
       list.sort((a, b) => b.total - a.total);
       const pages = Math.max(1, Math.ceil(list.length / per));
       const pg = Math.min(page, pages);
       const pendingIds = new Set(db.adjustments.filter(a => a.status === 'pending' || a.status === 'sent').map(a => a.user));
-      const rows = list.slice((pg - 1) * per, pg * per).map(u => Object.assign({}, u, { pending: pendingIds.has(u.id) }));
-      return send(res, 200, { ok: true, users: rows, count: list.length, page: pg, pages, updatedAt: db.usersUpdatedAt });
+      const rows = list.slice((pg - 1) * per, pg * per).map(u => {
+        const number = numberFor(u.id), acc = accOfId(u.id);
+        return Object.assign({}, u, { pending: pendingIds.has(u.id), number, hasAccount: !!acc, banned: !!db.blocked[number], frozen: !!db.frozen[number] });
+      });
+      const removed = Object.entries(db.removed).map(([id, r]) => {
+        const j = db.jobs.find(x => x.id === r.job);
+        return { id, name: r.name, number: r.number, at: r.at, by: r.by, state: !j ? 'unknown' : j.status === 'done' ? 'done' : OPEN(j) ? 'waiting' : 'failed', error: j && j.error || '' };
+      }).sort((a, b) => b.at - a.at);
+      return send(res, 200, { ok: true, users: rows, count: list.length, page: pg, pages, updatedAt: db.usersUpdatedAt, removed });
     }
 
     if (p === '/admin/api/adjust' && req.method === 'POST') {
@@ -995,24 +1211,67 @@ async function route(req, res) {
       return send(res, 200, { ok: true });
     }
 
+    // ── players: remove (start fresh) / ban / freeze ──
+    if (p.startsWith('/admin/api/players/') && req.method === 'POST') {
+      const b = await readBody(req);
+      const id = String(b.id || '').slice(0, 100);
+      if (p === '/admin/api/players/restore') {                      // changed my mind: show them again
+        const r = db.removed[id]; if (!r) return send(res, 404, { ok: false, error: 'not_found' });
+        const j = db.jobs.find(x => x.id === r.job); if (j && OPEN(j)) j.status = 'cancelled';
+        delete db.removed[id]; addAudit(me, 'player_restore', `${r.name} (${r.number})`); save();
+        return send(res, 200, { ok: true });
+      }
+      const u = db.users[id], name = (u && u.name) || (db.balances[id] && db.balances[id].name) || (accOfId(id) || {}).name || 'Player';
+      if (!id || (!u && !accOfId(id) && !db.balances[id])) return send(res, 404, { ok: false, error: 'player_not_found' });
+      const number = numberFor(id);
+      if (number.length < 7) return send(res, 400, { ok: false, error: 'no_number' });
+      if (p === '/admin/api/players/remove') {
+        removePlayer(id, name, me);
+        addAudit(me, 'player_remove', `${name} (${number}) — account deleted, off the leaderboard, fresh start`);
+      } else if (p === '/admin/api/players/ban') {
+        const banned = !!b.banned;
+        banNumber(number, banned, id, name, me);
+        addAudit(me, banned ? 'player_ban' : 'player_unban', `${name} (${number})`);
+      } else if (p === '/admin/api/players/freeze') {
+        const frozen = !!b.frozen;
+        freezeNumber(number, frozen, name, me);
+        addAudit(me, frozen ? 'player_freeze' : 'player_unfreeze', `${name} (${number})`);
+      } else return send(res, 404, { ok: false, error: 'not_found' });
+      save();
+      return send(res, 200, { ok: true });
+    }
+
     if (p === '/admin/api/accounts' && req.method === 'GET') {
       const q = String(url.searchParams.get('q') || '').toLowerCase().trim();
       const open = db.jobs.filter(a => OPEN(a) && String(a.type).startsWith('acct_'));
       let list = Object.values(db.accounts).map(a => {
         const b = db.balances[a.jid] || {};
-        return { number: a.number, name: (b.name || a.name || 'Player'), banned: !!a.banned, balance: b.balance || 0, bank: b.bank || 0,
+        return { number: a.number, name: (b.name || a.name || 'Player'), banned: !!a.banned || !!db.blocked[a.number], frozen: !!db.frozen[a.number], balance: b.balance || 0, bank: b.bank || 0,
                  lastLogin: db.logins[a.number] || 0, pending: open.some(x => x.user === a.jid) };
       });
+      for (const [n, bl] of Object.entries(db.blocked)) if (!db.accounts[n]) list.push({ number: n, name: bl.name || 'Player', banned: true, frozen: false, noAccount: true, balance: 0, bank: 0, lastLogin: 0, pending: false });
       if (q) list = list.filter(a => a.number.includes(q.replace(/\D/g, '') || '\u0000') || a.name.toLowerCase().includes(q));
       list.sort((a, b) => a.name.localeCompare(b.name));
       const waiting = Object.values(db.signups).filter(x => Date.now() - x.createdAt < SIGNUP_TTL).length;
-      return send(res, 200, { ok: true, items: list.slice(0, 500), total: Object.keys(db.accounts).length, banned: list.filter(a => a.banned).length, waiting });
+      return send(res, 200, { ok: true, items: list.slice(0, 500), total: Object.keys(db.accounts).length, banned: list.filter(a => a.banned).length, frozen: list.filter(a => a.frozen).length, waiting });
     }
 
     if (p.startsWith('/admin/api/accounts/') && req.method === 'POST') {
       const b = await readBody(req);
       const key = last10(b.number);
       const acc = db.accounts[key];
+      if (p === '/admin/api/accounts/ban' && (acc || db.blocked[key])) {
+        const banned = !!b.banned;
+        banNumber(key, banned, acc && acc.jid, acc ? acc.name : (db.blocked[key] || {}).name, me);
+        addAudit(me, banned ? 'account_ban' : 'account_unban', `${(acc || db.blocked[key] || {}).name} (${key})`);
+        save(); return send(res, 200, { ok: true });
+      }
+      if (p === '/admin/api/accounts/freeze' && acc) {
+        const frozen = !!b.frozen;
+        freezeNumber(key, frozen, acc.name, me);
+        addAudit(me, frozen ? 'account_freeze' : 'account_unfreeze', `${acc.name} (${key})`);
+        save(); return send(res, 200, { ok: true });
+      }
       if (!acc) return send(res, 404, { ok: false, error: 'account_not_found' });
       if (p === '/admin/api/accounts/password') {
         const pw = String(b.password || '');
@@ -1043,6 +1302,81 @@ async function route(req, res) {
       })) });
     }
 
+    // ── crash-plane game settings (difficulty, on/off, stake limits) ──
+    if (p === '/admin/api/game' && req.method === 'GET') return send(res, 200, Object.assign({ ok: true }, aviator.adminInfo()));
+
+    if (p === '/admin/api/game' && req.method === 'POST') {
+      const b = await readBody(req);
+      const patch = {}, said = [];
+      if (b.difficulty !== undefined) { patch.difficulty = String(b.difficulty); said.push('difficulty ' + patch.difficulty); }
+      if (b.enabled !== undefined) { patch.enabled = !!b.enabled; said.push(patch.enabled ? 'game ON' : 'game OFF'); }
+      for (const k of ['minBet', 'maxBet']) {
+        if (b[k] === undefined) continue;
+        const v = String(b[k]).trim() === '' ? 0 : parseAmount(b[k]);
+        if (!Number.isFinite(v) || v < 0 || v > 1e12) return send(res, 400, { ok: false, error: 'bad_amount' });
+        patch[k] = v; said.push(k + ' ' + (v || 'no limit'));
+      }
+      const r = aviator.setSettings(patch);
+      if (r.error) return send(res, 400, { ok: false, error: r.error });
+      addAudit(me, 'game_settings', said.join(', ') || 'no change');
+      save();
+      return send(res, 200, { ok: true, settings: r.settings });
+    }
+
+    // ── football settings: lock the whole football (or one room), live betting on/off, easy / normal / hard, stake limits ──
+    if (p === '/admin/api/football' && req.method === 'GET') return send(res, 200, Object.assign({ ok: true }, football.adminInfo()));
+
+    if (p === '/admin/api/football' && req.method === 'POST') {
+      const b = await readBody(req);
+      const patch = {}, said = [];
+      if (b.mode !== undefined) { patch.mode = String(b.mode); said.push('difficulty ' + patch.mode); }
+      for (const [k, name] of [['enabled', 'football'], ['virtual', 'virtual TV'], ['real', 'real matches'], ['live', 'live betting']]) {
+        if (b[k] === undefined) continue;
+        patch[k] = !!b[k]; said.push(name + (patch[k] ? ' ON' : ' OFF'));
+      }
+      for (const k of ['minBet', 'maxBet']) {
+        if (b[k] === undefined) continue;
+        const v = String(b[k]).trim() === '' ? 0 : parseAmount(b[k]);
+        if (!Number.isFinite(v) || v < 0 || v > 1e12) return send(res, 400, { ok: false, error: 'bad_amount' });
+        patch[k] = v; said.push(k + ' ' + (v || 'no limit'));
+      }
+      const r = football.setSettings(patch);
+      addAudit(me, 'football_settings', said.join(', ') || 'no change');
+      save();
+      return send(res, 200, { ok: true, settings: r.settings });
+    }
+
+    // ── slot machine settings (on/off, easy / normal / hard, stake limits) ──
+    if (p === '/admin/api/slots' && req.method === 'GET') return send(res, 200, Object.assign({ ok: true }, slots.adminInfo()));
+    if (p === '/admin/api/slots' && req.method === 'POST') {
+      const b = await readBody(req);
+      const patch = {}, said = [];
+      if (b.difficulty !== undefined) { patch.difficulty = String(b.difficulty); said.push('difficulty ' + patch.difficulty); }
+      if (b.enabled !== undefined) { patch.enabled = !!b.enabled; said.push(patch.enabled ? 'slots ON' : 'slots OFF'); }
+      for (const k of ['minBet', 'maxBet']) {
+        if (b[k] === undefined) continue;
+        const v = String(b[k]).trim() === '' ? 0 : parseAmount(b[k]);
+        if (!Number.isFinite(v) || v < 0 || v > 1e12) return send(res, 400, { ok: false, error: 'bad_amount' });
+        patch[k] = v; said.push(k + ' ' + (v || 'no limit'));
+      }
+      const r = slots.setSettings(patch);
+      if (r.error) return send(res, 400, { ok: false, error: r.error });
+      addAudit(me, 'slots_settings', said.join(', ') || 'no change');
+      save();
+      return send(res, 200, { ok: true, settings: r.settings });
+    }
+    if (p === '/admin/api/slots/reset-stats' && req.method === 'POST') {
+      slots.resetStats(); addAudit(me, 'slots_reset_stats', 'slot totals reset'); save();
+      return send(res, 200, { ok: true });
+    }
+
+    if (p === '/admin/api/game/reset-stats' && req.method === 'POST') {
+      aviator.resetStats();
+      addAudit(me, 'game_reset_stats', 'crash-plane totals reset');
+      save();
+      return send(res, 200, { ok: true });
+    }
+
     if (p === '/admin/api/audit') return send(res, 200, { ok: true, items: db.audit.slice(0, 100) });
 
     return send(res, 404, { ok: false, error: 'not_found' });
@@ -1053,11 +1387,63 @@ async function route(req, res) {
     if (p === '/' || p === '/index.html') return sendFile(res, 'index.html');
     if (p === '/admin' || p === '/admin/') return sendFile(res, 'admin.html');
     if (p === '/shop' || p === '/shop/') return sendFile(res, 'shop.html');
+    if (p === '/aviator' || p === '/game' || p === '/crash') return sendFile(res, 'aviator.html');
+    if (p === '/football' || p === '/football/' || p === '/sports') return sendFile(res, 'football.html');
+    if (p === '/slots' || p === '/slots/' || p === '/slot') return sendFile(res, 'slots.html');
+    if (p === '/login' || p === '/login/' || p === '/signup' || p === '/signup/') return sendFile(res, 'login.html');
     if (/^\/[A-Za-z0-9_.-]+$/.test(p) && ['.css', '.js', '.svg', '.png', '.ico'].includes(path.extname(p)))
       return sendFile(res, p.slice(1));
   }
   return send(res, 404, { ok: false, error: 'not_found' });
 }
+
+// the player's real wallet, as the bot last reported it, minus site transfers the bot has not applied yet
+const walletFor = (acc) => {
+    const pl = findPlayer(acc.number, acc.jid);
+    if (!pl) return null;
+    const out = db.transfers.filter(t => t.from === pl.jid && t.status === 'debiting' && (t.fromField || 'balance') === 'balance').reduce((s, t) => s + t.amount, 0);
+    return { jid: pl.jid, name: pl.w.name || acc.name, balance: (pl.w.balance || 0) - out };
+  };
+
+// the crash-plane game lives in its own file so this one stays readable
+const aviator = require('./aviator-engine')({
+  dataDir: DATA_DIR, send, readBody, clientIp, hit, SEC_HEADERS, save,
+  getAcc: (req) => {
+    const us = getSession(req, 'usid', usessions);
+    const acc = us ? db.accounts[us.user] : null;
+    return accountOk(acc) ? acc : null;
+  },
+  // (the crash plane also sees what is staked in football, so one coin cannot be bet twice)
+  getWallet: (acc) => { const w = walletFor(acc); if (w) w.balance -= football.hold(acc.number) + slots.hold(acc.number); return w; },
+  queueAdj: queueGameAdj,
+  getAdj: (id) => db.gameAdj.find(x => x.id === id) || null
+});
+
+// virtual football (TV) lives in its own file too — same wallet, same ledger rules as the crash plane
+const football = require('./football-engine')({
+  dataDir: DATA_DIR, send, readBody, clientIp, hit, save,
+  getAcc: (req) => {
+    const us = getSession(req, 'usid', usessions);
+    const acc = us ? db.accounts[us.user] : null;
+    return accountOk(acc) ? acc : null;
+  },
+  getWallet: (acc) => { const w = walletFor(acc); if (w) w.balance -= aviator.hold(acc.number) + slots.hold(acc.number); return w; },
+  queueAdj: queueGameAdj,
+  getAdj: (id) => db.gameAdj.find(x => x.id === id) || null
+});
+
+// the slot machine: its own file, same wallet and ledger rules (it also sees what the other games have staked)
+const slots = require('./slots-engine')({
+  dataDir: DATA_DIR, send, readBody, clientIp, hit, save,
+  getAcc: (req) => {
+    const us = getSession(req, 'usid', usessions);
+    const acc = us ? db.accounts[us.user] : null;
+    return accountOk(acc) ? acc : null;
+  },
+  getWallet: (acc) => { const w = walletFor(acc); if (w) w.balance -= aviator.hold(acc.number) + football.hold(acc.number); return w; },
+  queueAdj: queueGameAdj,
+  getAdj: (id) => db.gameAdj.find(x => x.id === id) || null
+});
 
 http.createServer(async (req, res) => {
   try { await route(req, res); }
