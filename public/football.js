@@ -2,8 +2,9 @@
 // Football TV — browser side. The server owns the fixtures, odds, goal minutes, tickets and your wallet.
 // This file only draws the match, keeps the clock and sends your bet.
 //   • The NEXT round is always open for booking (countdown to kick-off) while the CURRENT round plays on TV.
-//   • Markets: 1X2, 1UP, 2UP, double chance, GG/NG, correct score, goals Over/Under, home / away Over.
-//   • Real matches: real fixtures + odds (when the owner has switched them on).
+//   • Markets: 1X2, 1UP, 2UP, double chance, GG/NG, correct score, goals Over/Under, home / away Over,
+//     1st half + 2nd half (1X2, double chance, Over/Under), 1X2 & Over/Under, double chance & Over/Under, GG & Over/Under, corners.
+//   • Real matches: real fixtures + odds, and LIVE betting while the game is being played (virtual TV is pre-match only).
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => Number(n || 0).toLocaleString();
 
@@ -17,6 +18,8 @@ const ERR = {
   rate_limited: 'Slow down a little and try again.', bad_request: 'Something went wrong. Refresh the page.',
   real_off: 'Real football betting is not switched on yet.',
   live_off: 'Live betting is switched off right now.', live_wait: 'Odds for this live game are updating. Try again in a moment.',
+  live_goal: 'A goal was just scored. Live odds are being updated. Try again in a few seconds.',
+  odds_changed: 'The live odds just changed. Check the new odds on your betslip, then tap Place Bet again.',
   locked_leg: 'A game that has already started cannot be changed or removed.', not_editable: 'This ticket can no longer be edited.', no_ticket: 'Ticket not found. Refresh the page.'
 };
 function errText(code) {
@@ -38,31 +41,60 @@ function toast(msg, bad, link) {
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
 
 // ── markets (Sporty-style) ──────────────────────────────────
-const lineOf = (k) => Number(k.slice(1)) / 10;                       // 'o25' → 2.5
+// key letters:  x 1X2 · u1/u2 1UP/2UP · dc double chance · dnb draw no bet · gg GG/NG · cs correct score · oNN goals · hNN / aNN home / away goals
+//   p1 / p2 = 1st / 2nd half 1X2 · d1 / d2 = 1st / 2nd half double chance · fNN / sNN = 1st / 2nd half goals · cNN / chNN / caNN = corners (total / home / away)
+//   woNN = Home/Draw/Away WIN OR Over/Under (either one is enough) · xoNN = 1X2 & Over/Under · doNN = double chance & Over/Under · goNN = GG/NG & Over/Under
+const pfx = (k) => String(k).replace(/\d+$/, '');
+const lineOf = (k) => Number(String(k).replace(/^[a-z]+/, '')) / 10;     // 'o25' → 2.5 · 'xo15' → 1.5
 const L1 = (k) => lineOf(k).toFixed(1);
-const mName = (k) => ({ x: '1X2', u1: '1X2 - 1UP', u2: '1X2 - 2UP', dc: 'Double chance', dnb: 'Draw no bet', gg: 'GG / NG', cs: 'Correct score' }[k]) || ({ o: 'Goals O/U ', h: 'Home goals O/U ', a: 'Away goals O/U ' }[k[0]] + L1(k));
+const PF = { o: 'Goals O/U ', h: 'Home goals O/U ', a: 'Away goals O/U ', f: '1st half goals O/U ', s: '2nd half goals O/U ', c: 'Corners O/U ', ch: 'Home corners O/U ', ca: 'Away corners O/U ',
+  xo: '1X2 & Over/Under ', wo: 'Win or Over/Under ', do: 'Double chance & Over/Under ', go: 'GG/NG & Over/Under ' };
+const FIXED = { x: '1X2', u1: '1X2 - 1UP', u2: '1X2 - 2UP', dc: 'Double chance', dnb: 'Draw no bet', gg: 'GG / NG', cs: 'Correct score', p1: '1st half - 1X2', p2: '2nd half - 1X2', d1: '1st half - Double chance', d2: '2nd half - Double chance' };
+const mName = (k) => FIXED[k] || (PF[pfx(k)] || 'Market ') + L1(k);
 const pName = (k, i) => {
-  if (k === 'x' || k === 'u1' || k === 'u2') return ['Home', 'Draw', 'Away'][i];
+  if (k === 'x' || k === 'u1' || k === 'u2' || k === 'p1' || k === 'p2') return ['Home', 'Draw', 'Away'][i];
   if (k === 'dnb') return ['Home (draw = money back)', 'Away (draw = money back)'][i];
-  if (k === 'dc') return ['Home or Draw', 'Home or Away', 'Draw or Away'][i];
+  if (k === 'dc' || k === 'd1' || k === 'd2') return ['Home or Draw', 'Home or Away', 'Draw or Away'][i];
   if (k === 'gg') return ['GG (both teams score)', 'NG (not both score)'][i];
   if (k === 'cs') { const c = (S && S.cs) || []; return c[i] === 'Other' || c[i] === undefined ? 'Any other score' : 'Score ' + c[i]; }
-  return ({ o: '', h: 'Home ', a: 'Away ' }[k[0]]) + (i ? 'Under ' : 'Over ') + L1(k);
+  const p = pfx(k), l = L1(k);
+  if (p === 'xo') return ['Home', 'Draw', 'Away'][i % 3] + ' & ' + (i < 3 ? 'Over ' : 'Under ') + l;
+  if (p === 'wo') return ['Home win', 'Draw', 'Away win'][i % 3] + ' or ' + (i < 3 ? 'Over ' : 'Under ') + l;
+  if (p === 'do') return ['Home or Draw', 'Home or Away', 'Draw or Away'][i >> 1] + ' & ' + (i % 2 ? 'Under ' : 'Over ') + l;
+  if (p === 'go') return (i < 2 ? 'GG' : 'NG') + ' & ' + (i % 2 ? 'Under ' : 'Over ') + l;
+  return ({ h: 'Home ', a: 'Away ', ch: 'Home ', ca: 'Away ' }[p] || '') + (i ? 'Under ' : 'Over ') + l;
 };
+const O_ = ['Over', 'Under'];
 const MKTS = [
   { id: 'x', name: '1X2', k: 'x', cols: ['1', 'X', '2'] },
+  { id: 'dc', name: 'Double chance', k: 'dc', cols: ['1X', '12', 'X2'] },
+  { id: 'gg', name: 'GG / NG', k: 'gg', cols: ['GG', 'NG'] },
+  { id: 'ou', name: 'Goals O/U', p: 'o', cols: O_ },
+  { id: 'xo', name: '1X2 & O/U', p: 'xo', combo: [0, 1, 2, 3, 4, 5], cols: ['1', 'X', '2'] },
+  { id: 'wo', name: 'Win or O/U', p: 'wo', combo: [0, 1, 2, 3, 4, 5], cols: ['1', 'X', '2'] },
+  { id: 'do', name: 'Double chance & O/U', p: 'do', combo: [0, 2, 4, 1, 3, 5], cols: ['1X', '12', 'X2'] },
+  { id: 'go', name: 'GG/NG & O/U', p: 'go', combo: [null, 0, 2, null, 1, 3], cols: ['', 'GG', 'NG'] },
+  { id: 'p1', name: '1st half 1X2', k: 'p1', cols: ['1', 'X', '2'] },
+  { id: 'd1', name: '1st half DC', k: 'd1', cols: ['1X', '12', 'X2'] },
+  { id: 'f', name: '1st half O/U', p: 'f', cols: O_ },
+  { id: 'p2', name: '2nd half 1X2', k: 'p2', cols: ['1', 'X', '2'] },
+  { id: 'd2', name: '2nd half DC', k: 'd2', cols: ['1X', '12', 'X2'] },
+  { id: 's', name: '2nd half O/U', p: 's', cols: O_ },
+  { id: 'cr', name: 'Corners O/U', p: 'c', cols: O_ },
+  { id: 'tc', name: 'Team corners', p: 'cha', cols: ['Home Over', 'Away Over'] },
+  { id: 'tg', name: 'Home / Away Over', p: 'ha', cols: ['Home Over', 'Away Over'] },
+  { id: 'dnb', name: 'Draw no bet', k: 'dnb', cols: ['1', '2'] },
   { id: 'u1', name: '1X2 - 1UP', k: 'u1', cols: ['1', 'X', '2'] },
   { id: 'u2', name: '1X2 - 2UP', k: 'u2', cols: ['1', 'X', '2'] },
-  { id: 'dc', name: 'Double chance', k: 'dc', cols: ['1X', '12', 'X2'] },
-  { id: 'dnb', name: 'Draw no bet', k: 'dnb', cols: ['1', '2'] },
-  { id: 'ou', name: 'Goals O/U', p: 'o', cols: ['Over', 'Under'] },
-  { id: 'tg', name: 'Home / Away Over', p: 'ha', cols: ['Home Over', 'Away Over'] },
-  { id: 'gg', name: 'GG / NG', k: 'gg', cols: ['GG', 'NG'] },
   { id: 'cs', name: 'Correct score', k: 'cs', cols: ['Score', 'Odds'], two: true }
 ];
-const keysOf = (o, p) => Object.keys(o).filter(k => k[0] === p && k.length > 1).sort((a, b) => lineOf(a) - lineOf(b));
-const hasM = (o, m) => m.k ? !!o[m.k] : m.p === 'o' ? keysOf(o, 'o').length > 0 : keysOf(o, 'h').length > 0 && keysOf(o, 'a').length > 0;
+const basePfx = (p) => p === 'ha' ? 'h' : p === 'cha' ? 'ch' : p;           // which lines the "2.5 v" box lists
+const keysOf = (o, p) => Object.keys(o).filter(k => pfx(k) === p && k.length > p.length).sort((a, b) => lineOf(a) - lineOf(b));
+const hasM = (o, m) => m.k ? !!o[m.k] : m.p === 'ha' ? keysOf(o, 'h').length > 0 && keysOf(o, 'a').length > 0 : m.p === 'cha' ? keysOf(o, 'ch').length > 0 && keysOf(o, 'ca').length > 0 : keysOf(o, m.p).length > 0;
 const near = (o, p) => { const ks = keysOf(o, p).filter(k => o[k][0] != null && o[k][1] != null); return ks.length ? ks.reduce((b, k) => Math.abs(o[k][0] - o[k][1]) < Math.abs(o[b][0] - o[b][1]) ? k : b) : null; };
+const COMBO_DEF = 2.5;                                                      // combos open on the 2.5 line (the header box changes it for all matches)
+const ORDER = ['x', 'dc', 'gg', 'p1', 'd1', 'p2', 'd2', 'u1', 'u2', 'dnb'];
+const moreOrder = (o) => [...ORDER, ...['o', 'xo', 'wo', 'do', 'go', 'f', 's', 'h', 'a', 'c', 'ch', 'ca'].flatMap(p => keysOf(o, p)), 'cs'].filter(k => o[k]);
 
 // ── state ───────────────────────────────────────────────────
 // S = light state polled every second · NX = next round (odds, open to bet) · CU = current round (on TV) · RC / HI = past tickets / results
@@ -119,7 +151,16 @@ async function loadReal() {
     const j = await r.json();
     if (!r.ok || !j.ok) throw new Error('bad');
     roff = j.now - Date.now(); R = j;
-    Object.keys(rpicks).forEach(id => { if (!(editing && editing.keep.has(id)) && !R.events.some(e => e.id === id && !e.closed)) delete rpicks[id]; });
+    let dropped = 0;
+    Object.keys(rpicks).forEach(id => {
+      if (editing && editing.keep.has(id)) return;
+      const ev = R.events.find(e => e.id === id);
+      if (!ev || ev.closed) { if (ev && ev.sc !== undefined && Date.now() + roff >= ev.t) dropped++; delete rpicks[id]; return; }
+      const pk = rpicks[id], now = ev.o && ev.o[pk.k] ? ev.o[pk.k][pk.i] : null;                      // LIVE game: the price on your slip follows the live price
+      if (now == null) { delete rpicks[id]; dropped++; }
+      else if (Date.now() + roff >= ev.t && Math.abs(now - pk.odd) > 0.004) { pk.moved = now > pk.odd ? 'up' : 'down'; pk.odd = now; }
+    });
+    if (dropped) toast('A live game on your slip is paused (goal or odds updating) or that market closed. Pick it again in a moment.', true);
     renderTop(); renderReal(); renderMine(); renderBtn();
     if (curTk && curTk.real && $('ticketDlg').open) { const t = R.mine.find(x => x.id === curTk.id); if (t) openTicket(t, true); }
   } catch {}
@@ -146,13 +187,14 @@ function renderTop() {
   const lv = !!S && !S.enabled, lr = !!R && !!R.locked;                // the owner closed a room: show a lock instead of the games
   $('lockV').hidden = !lv; $('panelV').classList.toggle('locked', lv); $('lockR').hidden = !lr; $('panelR').classList.toggle('locked', lr);
 }
+const OPT6 = /^(xo|do|wo)\d+$/;
 const lum = (hex) => { const n = parseInt(hex.slice(1), 16); return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255; };
 const LOGOS = {};                                                    // club name → logo image (the server looks them up once and keeps them)
 const plainCrest = (t) => { const c = el('span', 'crest', t.c.slice(0, 1)); c.style.background = t.col; c.style.color = lum(t.col) > .6 ? '#111' : '#fff'; return c; };
 const crest = (t) => {
-  const u = LOGOS[t.n]; if (!u) return plainCrest(t);
-  const w = el('span', 'crest logo'), im = new Image(); im.alt = ''; im.decoding = 'async'; im.src = u;
-  im.onerror = () => { delete LOGOS[t.n]; if (w.isConnected) w.replaceWith(plainCrest(t)); };       // a broken link falls back to the coloured crest
+  const u = t.l || LOGOS[t.n]; if (!u) return plainCrest(t);                                        // t.l = the real logo the server sent with the match
+  const w = el('span', 'crest logo'), im = new Image(); im.alt = t.n; im.decoding = 'async'; im.loading = 'lazy'; im.referrerPolicy = 'no-referrer'; im.src = u;
+  im.onerror = () => { if (t.l && t.l === u) t.l = ''; else delete LOGOS[t.n]; if (w.isConnected) w.replaceWith(plainCrest(t)); };       // a broken link falls back to the coloured crest
   w.append(im); return w;
 };
 async function loadLogos() {
@@ -166,17 +208,18 @@ async function loadLogos() {
 const stars = (n) => { const s = el('span', 'stars'); for (let i = 0; i < 5; i++) s.append(el('i', i < n ? 'on' : '', '★')); return s; };
 const teamLine = (t, goals) => { const r = el('div', 'tl'); r.append(crest(t), el('span', 'tn', t.n)); if (t.st) r.append(stars(t.st)); if (goals !== undefined && goals !== null) r.append(el('b', 'sg', String(goals))); return r; };
 
-function cell(it, store, dis, redraw, k, i, label) {
-  const o = it.o[k], b = el('button', 'cell'); b.type = 'button';
+function cell(it, store, dis, redraw, k, i, label, tag) {
+  const o = it.o[k], b = el('button', 'cell' + (tag ? ' cb' : '')); b.type = 'button';
   if (!o || o[i] == null) { b.disabled = true; b.setAttribute('aria-label', 'Locked'); b.append(el('b', '', '-')); return b; }
   const on = !!store[it.id] && store[it.id].k === k && store[it.id].i === i;
-  b.disabled = dis; b.setAttribute('aria-pressed', String(on)); if (label) b.setAttribute('aria-label', label);
+  b.disabled = dis; b.dataset.has = '1'; b.setAttribute('aria-pressed', String(on)); if (label) b.setAttribute('aria-label', label);
+  if (tag) b.append(el('small', '', tag));                                                         // O / U in front of a combo price
   b.append(el('b', '', o[i].toFixed(2)));
   b.onclick = () => { if (on) delete store[it.id]; else store[it.id] = { k, i, odd: o[i] }; redraw(); renderBtn(); };
   return b;
 }
 function lineSelect(it, ui, p, redraw) {            // the "2.5 v" box in front of Over / Under
-  const pp = p === 'ha' ? 'h' : p, ks = keysOf(it.o, pp), sel = el('select', 'lsel'); sel.setAttribute('aria-label', 'Goal line');
+  const pp = basePfx(p), ks = keysOf(it.o, pp), sel = el('select', 'lsel'); sel.setAttribute('aria-label', 'Line');
   const c = rowLine[it.id] || ui.line, shown = c === 'near' ? near(it.o, pp) : pp + Math.round(c * 10);
   ks.forEach(k => { const o = el('option', '', L1(k)); o.value = lineOf(k); if (lineOf(k) === lineOf(shown || ks[0])) o.selected = true; sel.append(o); });
   sel.onchange = () => { rowLine[it.id] = Number(sel.value); redraw(); };
@@ -191,20 +234,27 @@ function csSelect(it, redraw) {                      // pick which score to show
   return [sel, pick];
 }
 function matchRow(it, ui, store, dis, redraw) {
-  const m = MKTS.find(x => x.id === ui.mk) || MKTS[0], row = el('div', 'sp-row');
+  const m = MKTS.find(x => x.id === ui.mk) || MKTS[0], row = el('div', 'sp-row' + (it.live ? ' islive' : ''));
   const main = el('div', 'sp-main'), teams = el('div', 'sp-teams');
   teams.append(teamLine(it.h, it.sc ? it.sc[0] : null), teamLine(it.a, it.sc ? it.sc[1] : null));
+  teams.classList.add('tap'); teams.tabIndex = 0; teams.setAttribute('role', 'button'); teams.setAttribute('aria-label', 'Open all markets of ' + it.h.n + ' v ' + it.a.n);
+  teams.onclick = () => openDetail(it); teams.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(it); } };
   const odds = el('div', 'sp-odds');
   if (m.id === 'cs') { const [sel, pick] = csSelect(it, redraw), c = cell(it, store, dis, redraw, 'cs', pick, 'Correct score'); c.style.gridColumn = 'span 2'; odds.append(sel, c); }
   else if (m.k) { if (m.cols.length === 2) odds.append(el('span')); m.cols.forEach((c, i) => odds.append(cell(it, store, dis, redraw, m.k, i, c))); }
+  else if (m.combo) {                                                      // 1X2 & O/U · double chance & O/U · GG & O/U: two rows (Over / Under), line chosen in the header
+    const want = rowLine[it.id] || (ui.line === 'near' ? COMBO_DEF : ui.line), ks = keysOf(it.o, m.p), k = ks.includes(m.p + Math.round(want * 10)) ? m.p + Math.round(want * 10) : ks.includes(m.p + Math.round(COMBO_DEF * 10)) ? m.p + Math.round(COMBO_DEF * 10) : ks[0];
+    odds.classList.add('combo');
+    m.combo.forEach((ix, n) => { if (ix === null) { odds.append(el('span')); return; } odds.append(cell(it, store, dis, redraw, k, ix, pName(k, ix), (m.p === 'do' ? ix % 2 : m.p === 'go' ? ix % 2 : ix >= 3 ? 1 : 0) ? 'U' : 'O')); });
+  }
   else {
     const L = rowLine[it.id] || ui.line, key = (p) => L === 'near' ? near(it.o, p) : p + Math.round(L * 10);
     odds.append(lineSelect(it, ui, m.p, redraw));
-    if (m.p === 'o') { const k = key('o'); odds.append(cell(it, store, dis, redraw, k, 0, 'Over'), cell(it, store, dis, redraw, k, 1, 'Under')); }
-    else odds.append(cell(it, store, dis, redraw, key('h'), 0, 'Home Over'), cell(it, store, dis, redraw, key('a'), 0, 'Away Over'));
+    if (m.p === 'ha' || m.p === 'cha') { const [a, b] = m.p === 'ha' ? ['h', 'a'] : ['ch', 'ca']; odds.append(cell(it, store, dis, redraw, key(a), 0, 'Home Over'), cell(it, store, dis, redraw, key(b), 0, 'Away Over')); }
+    else { const k = key(m.p); odds.append(cell(it, store, dis, redraw, k, 0, 'Over'), cell(it, store, dis, redraw, k, 1, 'Under')); }
   }
   main.append(teams, odds);
-  const foot = el('div', 'sp-foot'), n = Object.values(it.o).reduce((s, a) => s + a.filter(v => v != null).length, 0) - (m.id === 'cs' ? 1 : m.cols.length);
+  const foot = el('div', 'sp-foot'), n = Object.values(it.o).reduce((s, a) => s + a.filter(v => v != null).length, 0) - odds.querySelectorAll('[data-has]').length;
   const more = el('button', 'more', (openMore.has(it.id) ? '− ' : '+') + n + (openMore.has(it.id) ? '' : '  ›')); more.type = 'button';
   more.onclick = () => { openMore.has(it.id) ? openMore.delete(it.id) : openMore.add(it.id); redraw(); };
   foot.append(more, el('span', 'st' + (it.live ? ' live' : ''), it.meta || ''));
@@ -215,10 +265,10 @@ function matchRow(it, ui, store, dis, redraw) {
   }
   row.append(main, foot);
   if (openMore.has(it.id)) {
-    const box = el('div', 'sp-more'), order = ['x', 'u1', 'u2', 'dc', 'dnb', 'gg', ...keysOf(it.o, 'o'), ...keysOf(it.o, 'h'), ...keysOf(it.o, 'a'), 'cs'];
-    order.filter(k => it.o[k]).forEach(k => {
+    const box = el('div', 'sp-more'), order = moreOrder(it.o);
+    order.forEach(k => {
       const r = el('div', 'mrow'); r.append(el('span', 'ml', mName(k)));
-      const g = el('div', 'mc' + (k === 'cs' ? ' cs' : '')); it.o[k].forEach((_, i) => { const c = cell(it, store, dis, redraw, k, i); c.prepend(el('small', '', k === 'cs' ? (S.cs[i] || '') : pName(k, i))); g.append(c); }); r.append(g); box.append(r);
+      const g = el('div', 'mc' + (k === 'cs' ? ' cs' : '') + (OPT6.test(k) ? ' six' : '')); it.o[k].forEach((_, i) => { const c = cell(it, store, dis, redraw, k, i); c.prepend(el('small', '', k === 'cs' ? (S.cs[i] || '') : pName(k, i))); g.append(c); }); r.append(g); box.append(r);
     });
     row.append(box);
   }
@@ -229,9 +279,9 @@ function leagueHead(name, ui, items, redraw) {
   const nm = el('div', 'lgn'); nm.append(el('span', 'flag', name.slice(0, 2).toUpperCase()), el('b', '', name)); h.append(nm);
   const mid = el('div', 'hmid');
   if (!m.k) {
-    const s = el('select', 'near'); s.setAttribute('aria-label', 'Goal line for all matches');
-    const ls = [...new Set(items.flatMap(it => keysOf(it.o, m.p === 'ha' ? 'h' : m.p).map(lineOf)))].sort((a, b) => a - b);
-    [['near', 'Near'], ...ls.map(l => [l, l.toFixed(1)])].forEach(([v, t]) => { const o = el('option', '', t); o.value = v; if (String(ui.line) === String(v)) o.selected = true; s.append(o); });
+    const s = el('select', 'near'); s.setAttribute('aria-label', 'Line for all matches');
+    const ls = [...new Set(items.flatMap(it => keysOf(it.o, basePfx(m.p)).map(lineOf)))].sort((a, b) => a - b), shown = m.combo && ui.line === 'near' ? COMBO_DEF : ui.line;
+    (m.combo ? ls.map(l => [l, l.toFixed(1)]) : [['near', 'Near'], ...ls.map(l => [l, l.toFixed(1)])]).forEach(([v, t]) => { const o = el('option', '', t); o.value = v; if (String(shown) === String(v)) o.selected = true; s.append(o); });
     s.onchange = () => { ui.line = s.value === 'near' ? 'near' : Number(s.value); items.forEach(it => delete rowLine[it.id]); redraw(); };
     mid.append(s);
   }
@@ -250,7 +300,8 @@ function marketTabs(box, ui, items, redraw) {
 
 // ── virtual: the NEXT round is the betting list ─────────────
 const vItems = () => NX.fx.map(f => ({ id: f.id, lg: f.lg, h: f.h, a: f.a, o: f.o, meta: 'Round ' + NX.id }));
-function renderList() {
+function renderList() { renderListMain(); if (DET) renderDetail(); }
+function renderListMain() {
   if (!S || !NX) return;
   const ui = UI.v, dis = nleft() <= 1000 || !S.enabled, all = vItems(), items = all.filter(it => it.lg === ui.lg), box = $('list');
   const tabs = $('lgTabs'); tabs.replaceChildren();
@@ -297,8 +348,11 @@ function renderBtn() {
   $('open').textContent = 'Betslip' + (n ? ' (' + n + ') · ' + total().toFixed(2) : '');
   $('open').disabled = !n || !on;
   const fn = $('fabN'); fn.hidden = !n; fn.textContent = String(n); $('fab').hidden = tab === 'b';
+  const db = document.querySelector('.det-bar button'); if (db) { db.textContent = $('open').textContent; db.disabled = $('open').disabled; }     // the details page's own betslip button
 }
 
+const LG_PRI = ['England - Premier League', 'International Clubs - UEFA Champions League', 'England - EFL Cup', 'Spain - LaLiga', 'Germany - Bundesliga', 'Italy - Coppa Italia', 'Italy - Serie A', 'France - Ligue 1', 'International Clubs - UEFA Europa League', 'Spain - Copa del Rey', "International Clubs - UEFA Women's Champions League"];
+const lgRank = (n) => { const i = LG_PRI.indexOf(n); return i < 0 ? 99 : i; };
 // ── real matches ────────────────────────────────────────────
 const fmtTime = (t) => new Date(t).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 const fmtClock = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -308,8 +362,14 @@ const dayLabel = (t) => dayWord(t) + ' · ' + new Date(t).toLocaleDateString([],
 const until = (ms) => { const m = Math.max(0, Math.round(ms / 60000)); return m < 60 ? m + 'm' : m < 1440 ? Math.floor(m / 60) + 'h ' + String(m % 60).padStart(2, '0') + 'm' : Math.floor(m / 1440) + 'd ' + Math.floor(m % 1440 / 60) + 'h'; };
 const ckText = (ck) => !ck ? '' : ck.ph === 'HT' ? 'HT' : ck.ph === 'FT' ? 'FT' : ck.ph === 'ET' ? 'Extra time' : ck.min + (ck.plus ? '+' + ck.plus : '') + "'";
 const leftText = (ck) => !ck || (ck.ph !== '1H' && ck.ph !== '2H') ? (ck && ck.ph === 'HT' ? 'half-time' : '') : ck.left > 0 ? (ck.est ? '~' : '') + ck.left + ' min left' : 'added time';
-const rTeam = (n) => ({ n, c: n.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase(), col: '#64748b', st: 0 });
-function renderReal() {
+const rTeam = (n, logo) => ({ n, c: n.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase(), col: '#64748b', st: 0, l: logo || '' });
+// one real match as a list item (used by the list AND by the match details page)
+const mkRealItem = (ev, now) => { const shut = !!ev.closed;                // the server decides: before kick-off, or live with fresh odds
+    const started = now >= ev.t && !ev.fin, ck = ev.ck, why = ev.why === 'live_wait' ? ' · updating odds…' : ev.why === 'live_goal' ? ' · ⚽ goal! odds updating…' : ev.why === 'live_off' ? ' · live betting off' : '';
+    return { id: ev.id, real: true, live: started, t: ev.t, lgn: ev.lg, h: rTeam(ev.h, ev.hl), a: rTeam(ev.a, ev.al), o: ev.o, closed: shut, sc: ev.sc || null, fin: !!ev.fin,
+      meta: ev.lg + ' · ' + fmtClock(ev.t) + ' · ' + (ev.fin ? 'Full time' : started ? '● LIVE ' + [ckText(ck), leftText(ck)].filter(Boolean).join(' · ') + why : shut ? 'Closing' : 'in ' + until(ev.t - now)) }; };
+function renderReal() { renderRealMain(); if (DET) renderDetail(); }
+function renderRealMain() {
   const box = $('rlist'), note = $('rnote'), info = $('rinfo'); if (!R) return;
   if (R.locked) { box.replaceChildren(); return; }
   const now = Date.now() + roff, ui = UI.r, tabs = $('lgTabsR'), dtabs = $('dayTabsR');
@@ -319,25 +379,23 @@ function renderReal() {
     return;
   }
   note.hidden = true; box.replaceChildren();
-  const all = R.events.map(ev => { const shut = !!ev.closed;                // the server decides: before kick-off, or live with fresh odds
-    const started = now >= ev.t && !ev.fin, ck = ev.ck, why = ev.why === 'live_wait' ? ' · updating odds…' : ev.why === 'live_off' ? ' · live betting off' : '';
-    return { id: ev.id, real: true, live: started, t: ev.t, lgn: ev.lg, h: rTeam(ev.h), a: rTeam(ev.a), o: ev.o, closed: shut, sc: ev.sc || null, fin: !!ev.fin,
-      meta: ev.lg + ' · ' + fmtClock(ev.t) + ' · ' + (ev.fin ? 'Full time' : started ? '● LIVE ' + [ckText(ck), leftText(ck)].filter(Boolean).join(' · ') + why : shut ? 'Closing' : 'in ' + until(ev.t - now)) }; }).sort((a, b) => a.t - b.t);
+  const all = R.events.map(ev => mkRealItem(ev, now)).sort((a, b) => a.t - b.t);
   info.hidden = false;
-  info.textContent = 'Today and the next 6 days. Kick-off times are in your time (' + (Intl.DateTimeFormat().resolvedOptions().timeZone || 'local') + ').' + (R.updated ? ' Odds updated ' + fmtClock(R.updated) + '.' : '');
+  info.textContent = 'Today and the next 7 days. Kick-off times are in your time (' + (Intl.DateTimeFormat().resolvedOptions().timeZone || 'local') + ').' + (R.updated ? ' Odds updated ' + fmtClock(R.updated) + '.' : '');
   // day tabs (Today · Tomorrow · Mon 16 …) and league tabs
   const days = [...new Set(all.map(it => new Date(it.t).toDateString()))];
-  if (!dayInit && all.length) { dayInit = true; const td = new Date(now).toDateString(); if (days.includes(td)) ui.day = td; }     // open on TODAY's games first
-  if (ui.day !== 'all' && !days.includes(ui.day)) ui.day = 'all';
+  const nLive = all.filter(it => it.live).length;
+  if (!dayInit && all.length) { dayInit = true; const td = new Date(now).toDateString(); if (nLive) ui.day = 'live'; else if (days.includes(td)) ui.day = td; }     // open on the LIVE games, else TODAY's games
+  if (ui.day !== 'all' && !(ui.day === 'live' && nLive) && !days.includes(ui.day)) ui.day = 'all';
   dtabs.replaceChildren();
-  if (days.length) [['all', 'All days (' + all.length + ')'], ...days.map(d => { const f = all.find(it => new Date(it.t).toDateString() === d); return [d, dayWord(f.t) + ' (' + all.filter(it => new Date(it.t).toDateString() === d).length + ')']; })].forEach(([v, t]) => {
-    const b = el('button', 'lt', t); b.type = 'button'; b.setAttribute('aria-selected', String(ui.day === v)); b.onclick = () => { ui.day = v; renderReal(); }; dtabs.append(b);
+  if (days.length) [['all', 'All days (' + all.length + ')'], ...(nLive ? [['live', '🔴 Live now (' + nLive + ')']] : []), ...days.map(d => { const f = all.find(it => new Date(it.t).toDateString() === d); return [d, dayWord(f.t) + ' (' + all.filter(it => new Date(it.t).toDateString() === d).length + ')']; })].forEach(([v, t]) => {
+    const b = el('button', 'lt' + (v === 'live' ? ' livetab' : ''), t); b.type = 'button'; b.setAttribute('aria-selected', String(ui.day === v)); b.onclick = () => { ui.day = v; renderReal(); }; dtabs.append(b);
   });
-  const byDay = all.filter(it => ui.day === 'all' || new Date(it.t).toDateString() === ui.day);
-  const lgs = [...new Set(byDay.map(it => it.lgn))];
+  const byDay = all.filter(it => ui.day === 'all' || (ui.day === 'live' ? it.live : new Date(it.t).toDateString() === ui.day));
+  const lgs = [...new Set(byDay.map(it => it.lgn))].sort((a, b) => (lgRank(a) - lgRank(b)) || a.localeCompare(b));
   if (ui.lg !== 'all' && !lgs.includes(ui.lg)) ui.lg = 'all';
   tabs.replaceChildren();
-  if (lgs.length > 1) [['all', 'All leagues'], ...lgs.map(l => [l, l])].forEach(([v, t]) => {
+  if (lgs.length > 1) [['all', 'All leagues (' + byDay.length + ')'], ...lgs.map(l => [l, l + ' (' + byDay.filter(it => it.lgn === l).length + ')'])].forEach(([v, t]) => {
     const b = el('button', 'lt', t); b.type = 'button'; b.setAttribute('aria-selected', String(ui.lg === v)); b.onclick = () => { ui.lg = v; renderReal(); }; tabs.append(b);
   });
   const items = byDay.filter(it => ui.lg === 'all' || it.lgn === ui.lg);
@@ -353,6 +411,81 @@ function renderReal() {
   box.append(leagueHead(ui.lg === 'all' ? 'All leagues' : ui.lg, ui, items, renderReal));
   let day = '';
   items.forEach(it => { const d = dayLabel(it.t); if (d !== day) { day = d; box.append(el('div', 'day-sep', d)); } box.append(matchRow(it, ui, rpicks, it.closed || !R.on, renderReal)); });
+}
+
+
+// ── MATCH DETAILS: tap a match → every market of that game, in groups (All · Main · Goals · Combos · Half · Corners) ──
+let DET = null;
+const DET_TABS = [['all', 'All'], ['main', 'Main'], ['goals', 'Goals'], ['combo', 'Combos'], ['half', 'Half'], ['corners', 'Corners']];
+function detItem() {
+  if (!DET) return null;
+  if (DET.real) { const ev = R && R.events.find(e => e.id === DET.id); return ev ? mkRealItem(ev, Date.now() + roff) : null; }
+  return NX ? vItems().find(i => i.id === DET.id) || null : null;
+}
+function openDetail(it) {
+  DET = { id: it.id, real: !!it.real, tab: 'all', shut: new Set() };
+  try { history.pushState({ fbdet: 1 }, ''); } catch (e) { }
+  document.body.classList.add('det-open'); $('detail').hidden = false; $('detail').scrollTop = 0; renderDetail();
+}
+function hideDetail() { DET = null; $('detail').hidden = true; $('detail').replaceChildren(); document.body.classList.remove('det-open'); }
+function closeDetail() { if (history.state && history.state.fbdet) history.back(); else hideDetail(); }
+addEventListener('popstate', () => { if (DET) hideDetail(); });
+function detSections(it, store, dis, redraw) {
+  const o = it.o, out = [], has = (k) => o[k] && o[k].some(v => v != null);
+  const simple = (title, tab, k, lab) => {
+    if (!has(k)) return; const g = el('div', 'dg c' + o[k].length);
+    o[k].forEach((_, i) => { const c = cell(it, store, dis, redraw, k, i, lab[i]); c.prepend(el('span', 'dl', lab[i])); g.append(c); });
+    out.push({ title, tab, node: g });
+  };
+  const lines = (title, tab, p) => {                                             // Over / Under table: one row per line
+    const ks = keysOf(o, p).filter(has); if (!ks.length) return;
+    const g = el('div', 'dg tbl'); g.style.setProperty('--n', '2'); g.append(el('span'), el('span', 'dh', 'Over'), el('span', 'dh', 'Under'));
+    ks.forEach(k => { g.append(el('span', 'dline', L1(k))); [0, 1].forEach(i => g.append(cell(it, store, dis, redraw, k, i, pName(k, i)))); });
+    out.push({ title, tab, node: g });
+  };
+  const combo = (title, tab, p, cols, ix) => {                                   // e.g. Home / Draw / Away  x  Over / Under per line
+    const ks = keysOf(o, p).filter(has); if (!ks.length) return;
+    const g = el('div', 'dg tbl'); g.style.setProperty('--n', String(cols.length)); g.append(el('span')); cols.forEach(c => g.append(el('span', 'dh', c)));
+    ks.forEach(k => [0, 1].forEach(u => { g.append(el('span', 'dline', (u ? 'Under ' : 'Over ') + L1(k))); cols.forEach((_, c) => g.append(cell(it, store, dis, redraw, k, ix(c, u), pName(k, ix(c, u))))); }));
+    out.push({ title, tab, node: g });
+  };
+  const HDA = ['Home', 'Draw', 'Away'], DC = ['Home or Draw', 'Home or Away', 'Draw or Away'];
+  simple('1X2', 'main', 'x', HDA); simple('Double Chance', 'main', 'dc', DC); simple('GG / NG', 'main', 'gg', ['GG', 'NG']); simple('Draw No Bet', 'main', 'dnb', ['Home', 'Away']);
+  simple('1X2 - 1UP', 'main', 'u1', HDA); simple('1X2 - 2UP', 'main', 'u2', HDA);
+  lines('Over/Under', 'goals', 'o'); lines('Home Over/Under', 'goals', 'h'); lines('Away Over/Under', 'goals', 'a');
+  if (has('cs')) { const g = el('div', 'dg c3'); it.o.cs.forEach((_, i) => { const n = (S && S.cs && S.cs[i]) || ''; const c = cell(it, store, dis, redraw, 'cs', i, n); c.prepend(el('span', 'dl', n === 'Other' || n === '' ? 'Any other' : n)); g.append(c); }); out.push({ title: 'Correct Score', tab: 'goals', node: g }); }
+  combo('1X2 & Over/Under', 'combo', 'xo', HDA, (c, u) => u * 3 + c); combo('Win or Over/Under', 'combo', 'wo', HDA, (c, u) => u * 3 + c);
+  combo('Double Chance & Over/Under', 'combo', 'do', DC, (c, u) => c * 2 + u); combo('GG/NG & Over/Under', 'combo', 'go', ['GG', 'NG'], (c, u) => c * 2 + u);
+  simple('1st Half - 1X2', 'half', 'p1', HDA); simple('1st Half - Double Chance', 'half', 'd1', DC); lines('1st Half - Over/Under', 'half', 'f');
+  simple('2nd Half - 1X2', 'half', 'p2', HDA); simple('2nd Half - Double Chance', 'half', 'd2', DC); lines('2nd Half - Over/Under', 'half', 's');
+  lines('Corners Over/Under', 'corners', 'c'); lines('Home Corners Over/Under', 'corners', 'ch'); lines('Away Corners Over/Under', 'corners', 'ca');
+  return out;
+}
+function renderDetail() {
+  const root = $('detail'); if (!DET) return;
+  const it = detItem(), keep = root.scrollTop; root.replaceChildren();
+  const top = el('div', 'det-top'), back = el('button', 'det-back'); back.type = 'button'; back.setAttribute('aria-label', 'Back'); back.textContent = '←'; back.onclick = closeDetail;
+  top.append(back, el('b', '', 'Details')); root.append(top);
+  if (!it) { root.append(el('p', 'empty', 'This match is no longer available.')); return; }
+  const store = DET.real ? rpicks : picks, redraw = DET.real ? renderReal : renderList, dis = DET.real ? (it.closed || !R.on) : (nleft() <= 1000 || !S.enabled);
+  const wrap = el('div', 'det-wrap'), hd = el('div', 'det-hd');
+  hd.append(el('div', 'det-lg', it.real ? it.lgn : (S && S.leagues[it.lg]) || ''), el('div', 'det-st' + (it.live ? ' live' : ''), (it.real ? it.meta.replace(it.lgn + ' · ', '') : it.meta) || ''));
+  [it.h, it.a].forEach((t, i) => { const r = el('div', 'det-team'), n = el('div', 'det-tn'); n.append(crest(t), el('span', '', t.n)); r.append(n, el('b', 'det-sc', it.sc ? String(it.sc[i]) : '-')); hd.append(r); });
+  if (dis && it.real && !it.fin) hd.append(el('p', 'det-warn', it.live ? 'Live betting on this game is paused for a moment (odds updating). Try again shortly.' : 'Betting on this game is closed.'));
+  const secs = detSections(it, store, dis, redraw), tabs = el('div', 'det-tabs'); tabs.setAttribute('role', 'tablist');
+  const have = DET_TABS.filter(([id]) => id === 'all' || secs.some(s => s.tab === id)); if (!have.some(([id]) => id === DET.tab)) DET.tab = 'all';
+  have.forEach(([id, name]) => { const b = el('button', '', name); b.type = 'button'; b.setAttribute('aria-selected', String(DET.tab === id)); b.onclick = () => { DET.tab = id; renderDetail(); root.scrollTop = 0; }; tabs.append(b); });
+  wrap.append(hd, tabs);
+  const list = secs.filter(s => DET.tab === 'all' || s.tab === DET.tab);
+  if (!list.length) wrap.append(el('p', 'empty', 'No markets here yet.'));
+  list.forEach(s => {
+    const box = el('section', 'det-sec'), h = el('button', 'det-sh'), shut = DET.shut.has(s.title); h.type = 'button'; h.setAttribute('aria-expanded', String(!shut));
+    h.append(el('span', 'car', shut ? '▸' : '▾'), el('span', '', s.title)); h.onclick = () => { shut ? DET.shut.delete(s.title) : DET.shut.add(s.title); renderDetail(); };
+    box.append(h); if (!shut) box.append(s.node); wrap.append(box);
+  });
+  root.append(wrap);
+  const bar = el('div', 'det-bar'), bt = el('button', '', $('open').textContent); bt.type = 'button'; bt.disabled = $('open').disabled; bt.onclick = () => $('open').click(); bar.append(bt); root.append(bar);
+  root.scrollTop = keep;
 }
 
 // ── booking codes: share a slip, load someone else's ─────────
@@ -569,7 +702,7 @@ function renderSlip() {
     const row = el('div', 'sel'), x = el('button', 'sx', '✕'), body = el('div', 'sb'), top = el('div', 'st1');
     x.type = 'button'; x.setAttribute('aria-label', 'Remove');
     x.onclick = () => { delete p[m]; slipMode === 'r' ? renderReal() : renderList(); renderBtn(); slipCount() ? renderSlip() : $('slip').close(); };
-    top.append(el('b', '', pName(p[m].k, p[m].i)), el('b', 'od', p[m].odd.toFixed(2)));
+    top.append(el('b', '', pName(p[m].k, p[m].i)), el('b', 'od' + (p[m].moved ? ' ' + p[m].moved : ''), (p[m].moved === 'up' ? '▲ ' : p[m].moved === 'down' ? '▼ ' : '') + p[m].odd.toFixed(2)));
     body.append(top, el('span', '', legInfo(m).t), el('span', 'mk', mName(p[m].k)));
     row.append(x, body); box.append(row);
   });
@@ -590,9 +723,10 @@ $('place').onclick = async () => {
   if (busy) return;
   const amount = parseAmt($('stake').value), p = cur(), real = slipMode === 'r', ed = editing && editing.real === real ? editing : null;
   if (amount < 1) { $('msg').textContent = ERR.bad_amount; return; }
+  Object.values(p).forEach(x => { delete x.moved; });                       // the player has now seen the price on the slip
   busy = true; $('place').disabled = true; $('msg').textContent = '';
   try {
-    const all = real ? [...lockedList().map(e => ({ e, k: editing.locked[e].k, i: editing.locked[e].i })), ...Object.keys(p).map(e => ({ e, k: p[e].k, i: p[e].i }))]
+    const all = real ? [...lockedList().map(e => ({ e, k: editing.locked[e].k, i: editing.locked[e].i })), ...Object.keys(p).map(e => ({ e, k: p[e].k, i: p[e].i, odd: p[e].odd }))]
       : Object.keys(p).map(m => ({ m: +m, k: p[m].k, i: p[m].i }));
     const body = real ? { amount, picks: all } : { round: S.nextId, amount, picks: all };
     if (ed) body.id = ed.id;
@@ -600,7 +734,7 @@ $('place').onclick = async () => {
     const r = await fetch(url, { method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok || j.ok === false) { $('msg').textContent = errText(j.error); if (j.error === 'stale') { picks = {}; load(); } if (j.error === 'locked_leg' || j.error === 'closed') loadReal(); }
+    if (!r.ok || j.ok === false) { $('msg').textContent = errText(j.error); if (j.error === 'stale') { picks = {}; load(); } if (j.error === 'locked_leg' || j.error === 'closed') loadReal(); if (j.error === 'odds_changed' || j.error === 'live_goal' || j.error === 'live_wait') { await loadReal(); if ($('slip').open && slipCount()) renderSlip(); } }
     else {
       Object.keys(p).forEach(k => delete p[k]); editing = null; renderEditBar(); $('slip').close();
       real ? renderReal() : renderList(); renderBtn(); await Promise.all([load(), loadReal()]);
@@ -714,9 +848,9 @@ function crowd(t, cheer) {          // the people in the stands (top and bottom 
 function person(x, y, r, fill, edge) { ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = edge; ctx.lineWidth = 2; ctx.stroke(); }
 
 const cvImgs = {};
-function cvLogo(name) {                                                // a club logo for the TV scoreboard (drawn once it has loaded)
-  const u = LOGOS[name]; if (!u) return null; let im = cvImgs[u];
-  if (!im) { im = cvImgs[u] = new Image(); im.src = u; im.onerror = () => { delete LOGOS[name]; }; }
+function cvLogo(t) {                                                   // a club logo for the TV scoreboard (drawn once it has loaded)
+  const u = t.l || LOGOS[t.n]; if (!u) return null; let im = cvImgs[u];
+  if (!im) { im = cvImgs[u] = new Image(); im.referrerPolicy = 'no-referrer'; im.src = u; im.onerror = () => { if (t.l === u) t.l = ''; delete LOGOS[t.n]; }; }
   return im.complete && im.naturalWidth ? im : null;
 }
 function draw(now) {
@@ -752,7 +886,7 @@ function draw(now) {
   ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ball[0], ball[1], 6.5, 0, 7); ctx.fill(); ctx.strokeStyle = '#111'; ctx.lineWidth = 1.5; ctx.stroke();
   ctx.font = '700 22px Segoe UI,Roboto,sans-serif'; ctx.textBaseline = 'middle';
   ctx.fillStyle = 'rgba(0,0,0,.72)'; ctx.fillRect(24, 26, 420, 40);
-  ctx.fillStyle = f.h.col; ctx.fillRect(24, 26, 6, 40); const lh = cvLogo(f.h.n), la = cvLogo(f.a.n);
+  ctx.fillStyle = f.h.col; ctx.fillRect(24, 26, 6, 40); const lh = cvLogo(f.h), la = cvLogo(f.a);
   if (lh) ctx.drawImage(lh, 36, 31, 30, 30);
   ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.fillText(f.h.c, lh ? 72 : 40, 46);
   ctx.textAlign = 'center'; ctx.fillStyle = '#ffd23f'; ctx.fillText(sh + '  -  ' + sa, 196, 46);
