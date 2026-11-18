@@ -408,3 +408,26 @@ body.det-open { overflow: hidden; }
 .det-bar button { width: 100%; font: inherit; font-weight: 800; font-size: 1.05rem; color: #fff; background: var(--sp-fill); border: 0; border-radius: 8px; padding: 14px 8px; cursor: pointer; }
 .det-bar button:disabled { background: #2c6b3f; color: #cfe9d6; cursor: not-allowed; }
 @media (max-width: 360px) { .dg.tbl { grid-template-columns: 70px repeat(var(--n, 2), minmax(0, 1fr)); } .det .cell { padding: 0 8px; } }
+
+/* Details page: smaller, tighter layout */
+.det-top { height: 46px; font-size: 1.05rem; gap: 10px; }
+.det-back { font-size: 1.4rem; }
+.det-lg { font-size: .76rem; padding: 10px 12px 0; }
+.det-st { font-size: .85rem; padding: 3px 12px 8px; }
+.det-team { grid-template-columns: minmax(0, 1fr) 40px; margin: 0 12px 3px; gap: 3px; }
+.det-tn { padding: 6px 10px; gap: 8px; font-size: .88rem; }
+.det-tn .crest, .det-tn img, .det-tn svg { width: 22px; height: 22px; }
+.det-sc { font-size: 1rem; }
+.det-tabs { top: 46px; margin-top: 8px; }
+.det-tabs button { font-size: .82rem; padding: 9px 13px; border-bottom-width: 2px; }
+.det-sh { padding: 10px 12px; font-size: .88rem; gap: 8px; }
+.det-sh .car { font-size: .7rem; width: 10px; }
+.dg { gap: 5px; padding: 0 12px 10px; }
+.dg.tbl { grid-template-columns: 62px repeat(var(--n, 2), minmax(0, 1fr)); }
+.det .cell { min-height: 34px; padding: 0 8px; font-size: .82rem; gap: 4px; }
+.det .cell .dl { font-size: .7rem; line-height: 1.1; }
+.det .dh { min-height: 28px; font-size: .7rem; }
+.det .dline { min-height: 34px; font-size: .72rem; }
+.det-bar { padding: 7px 12px calc(7px + env(safe-area-inset-bottom, 0px)); }
+.det-bar button { font-size: .9rem; padding: 10px 8px; border-radius: 6px; }
+.det { padding-bottom: 64px; }
