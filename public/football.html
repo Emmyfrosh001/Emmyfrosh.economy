@@ -79,7 +79,7 @@
     <section id="panelR" role="tabpanel" aria-labelledby="tabBtnR" hidden>
       <div id="lockR" class="lockbox" hidden><div class="lk">🔒</div><h2>Real matches are locked</h2><p>Betting is closed right now. Please come back later.</p></div>
       <div id="codeBox" class="s-card" hidden></div>
-      <p class="s-muted small">Real fixtures, real kick-off times and real odds (1X2, double chance, draw no bet, GG/NG, Over/Under, home / away goals). Bets close 1 minute before kick-off and pay out after the real full-time score. You can also bet on live games while their odds are updating. Live games show their score and minute. After you bet you get a booking code, and you can edit a ticket (games that have not started) from My tickets.</p>
+      <p class="s-muted small">Real fixtures and real final scores. <b>Live betting is open on real matches only</b>: tap <b>🔴 Live now</b> to bet while a game is being played. Live prices are re-made from the score and the minute, pause for a short time after every goal, and close around the 85th minute. Markets: 1X2, double chance, GG/NG, Over/Under, 1st half and 2nd half (1X2, double chance, Over/Under), 1X2 &amp; Over/Under, Home/Away win or Over/Under, double chance &amp; Over/Under, GG &amp; Over/Under, corners (real matches only), home / away goals. Pre-match bets close 1 minute before kick-off and pay out after the real full-time score. After you bet you get a booking code, and you can edit a ticket (games that have not started) from My tickets.</p>
       <p id="rinfo" class="s-muted small" hidden></p>
       <div id="rnote" class="s-card av-note" hidden></div>
       <div class="sp-lt" id="dayTabsR" role="tablist" aria-label="Days"></div>
@@ -95,7 +95,7 @@
       <section class="fb-block"><h2 class="fb-h">Real matches</h2><div id="realMine"></div></section>
     </section>
 
-    <p class="s-muted small center">Bets use your wallet money. A new virtual round kicks off every 3 minutes. Virtual results are drawn by the server before kick-off. Real results come from the real final score.</p>
+    <p class="s-muted small center">Bets use your wallet money. A new virtual round kicks off every 3 minutes (virtual TV is pre-match betting only; live betting is for real matches). Virtual results are drawn by the server before kick-off. Real results come from the real final score.</p>
   </main>
 
   <div class="fb-bar"><div id="nextRound" class="nr">Next Round</div><button id="open" type="button" disabled>Betslip</button></div>
@@ -120,7 +120,7 @@
     <div class="bs-h"><span class="bs-n" id="slipN">0</span><span class="bs-t" id="slipTitle">Betslip</span><button class="bs-ic" id="slipClear" type="button" aria-label="Remove all games"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13M10 11v6M14 11v6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button><button class="x" id="close" type="button" aria-label="Close betslip">×</button></div>
     <div id="sels"></div>
     <div class="f">
-      <p id="liveNote" class="s-muted small" hidden>⚡ Your slip has a live game. The odds you see now are the odds you get when you place the bet.</p>
+      <p id="liveNote" class="s-muted small" hidden>⚡ Your slip has a live game. If the odds move before you tap Place Bet, you will be asked to confirm the new odds.</p>
       <div class="row bs-stake"><label for="stake">Total Stake</label><span class="bs-ngn">NGN</span><input id="stake" type="text" inputmode="decimal" value="100" autocomplete="off"></div>
       <div class="chips">
         <button type="button" data-set="10">10</button><button type="button" data-set="100">100</button>
@@ -151,6 +151,8 @@
     <div class="bk-act" id="bkAct"></div>
     <button class="bk-done" id="bkClose" type="button">Done</button>
   </dialog>
+
+  <section id="detail" class="det" aria-label="Match details" hidden></section>
 
   <dialog id="infoDlg" aria-label="Match info">
     <div class="sh"><span id="infoTitle">Match info</span><button class="x" id="infoClose" type="button" aria-label="Close">×</button></div>
