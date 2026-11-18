@@ -891,7 +891,7 @@ module.exports = function createFootball(opts) {
     'uefa.nations': 'UEFA Nations League', 'fifa.friendly': 'International Friendly', 'fifa.world': 'World Cup', 'fifa.worldq.uefa': 'World Cup Qualifiers (Europe)',
     'fifa.worldq.caf': 'World Cup Qualifiers (Africa)', 'fifa.worldq.conmebol': 'World Cup Qualifiers (S. America)', 'uefa.euroq': 'Euro Qualifiers', 'caf.nations': 'AFCON',
     'caf.champions': 'CAF Champions League', 'arg.1': 'Primera Division - Argentina', 'bra.1': 'Brasileirao', 'usa.1': 'MLS', 'mex.1': 'Liga MX', 'jpn.1': 'J1 League', 'aus.1': 'A-League',
-    'fra.coupe_de_france': 'France - Coupe de France', 'por.taca.portugal': 'Portugal - Taca de Portugal', 'sau.1': 'Saudi Pro League', 'rsa.1': 'South African Premier Division' };
+    'uefa.wchampions': "International Clubs - UEFA Women's Champions League", 'eng.w.1': "England - Women's Super League", 'fra.coupe_de_france': 'France - Coupe de France', 'por.taca.portugal': 'Portugal - Taca de Portugal', 'sau.1': 'Saudi Pro League', 'rsa.1': 'South African Premier Division' };
   Object.assign(LEAGUE_NAME, ESPN_LG);
   const FREE_LEAGUES = String(process.env.FREE_LEAGUES || '').split(',').map(x => x.trim()).filter(x => /^[a-z0-9_.]+$/i.test(x)), FREE_LG = FREE_LEAGUES.length ? FREE_LEAGUES : Object.keys(ESPN_LG);
   const FREE_REFRESH = Math.max(5, Number(process.env.FREE_REFRESH_MIN) || 30) * 60000, FREE_LIVE_MS = Math.max(15, Number(process.env.FREE_LIVE_SEC) || 20) * 1000, FREE_FRESH_MS = 2 * FREE_LIVE_MS + 15000;     // live score check every 20s; live betting needs a score newer than ~55s
