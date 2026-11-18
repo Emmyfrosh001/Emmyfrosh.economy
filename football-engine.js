@@ -22,11 +22,53 @@ const MAX_STAKE = 1e12, MAX_WIN = 1e14, MAX_PICKS = 10, MAX_BETS = 8, PER = 20, 
 // virtual markets (every market is an array of odds):
 //   x = 1X2 · u1 / u2 = 1X2 with 1UP / 2UP early payout · dc = double chance (1X, 12, X2) · gg = GG / NG (both teams score)
 //   cs = correct score (the CS list + "Other") · oNN = total goals Over/Under NN/10 · hNN / aNN = HOME / AWAY team goals
-const LINES = { o: [.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5], h: [.5, 1.5, 2.5, 3.5], a: [.5, 1.5, 2.5, 3.5] };
+// NEW markets (work in the virtual TV and in real matches):
+//   p1 / p2 = 1st half / 2nd half 1X2 · d1 / d2 = 1st half / 2nd half double chance · fNN / sNN = 1st half / 2nd half total goals Over/Under NN/10
+//   cNN = total corners Over/Under · chNN / caNN = home / away corners Over/Under
+//   xoNN = 1X2 & Over/Under  [1&O, X&O, 2&O, 1&U, X&U, 2&U]  · doNN = double chance & Over/Under [1X&O, 1X&U, 12&O, 12&U, X2&O, X2&U]
+//   goNN = GG/NG & Over/Under [GG&O, GG&U, NG&O, NG&U]
+const LINES = { o: [.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5], h: [.5, 1.5, 2.5, 3.5], a: [.5, 1.5, 2.5, 3.5],
+  f: [.5, 1.5, 2.5], s: [.5, 1.5, 2.5], c: [7.5, 8.5, 9.5, 10.5, 11.5, 12.5], ch: [3.5, 4.5, 5.5, 6.5], ca: [2.5, 3.5, 4.5, 5.5] };
+const COMBO = { xo: [1.5, 2.5, 3.5], do: [1.5, 2.5], go: [2.5], wo: [1.5, 2.5, 3.5] };   // wo = Home / Draw / Away WIN OR Over / Under
 const CS = [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [0, 1], [0, 2], [0, 3], [0, 4], [1, 1], [2, 1], [3, 1], [4, 1], [1, 2], [1, 3], [1, 4], [2, 2], [3, 2], [2, 3], [3, 3]];
-const OPTS = { x: 3, u1: 3, u2: 3, dc: 3, gg: 2, cs: CS.length + 1 };
+const OPTS = { x: 3, u1: 3, u2: 3, dc: 3, gg: 2, cs: CS.length + 1, p1: 3, p2: 3, d1: 3, d2: 3 };
 for (const [p, ls] of Object.entries(LINES)) ls.forEach(l => { OPTS[p + Math.round(l * 10)] = 2; });
-const lineOf = (k) => Number(k.slice(1)) / 10;
+for (const [p, ls] of Object.entries(COMBO)) ls.forEach(l => { OPTS[p + Math.round(l * 10)] = p === 'xo' || p === 'do' || p === 'wo' ? 6 : 4; });
+const lineOf = (k) => Number(String(k).replace(/^[a-z]+/, '')) / 10;
+const NEWK = /^(p1|p2|d1|d2|f\d+|s\d+|c\d+|ch\d+|ca\d+|xo\d+|do\d+|go\d+|wo\d+)$/;     // the markets that are settled by hit() below
+const HALFK = /^(p1|p2|d1|d2|f\d+|s\d+|xo\d+|do\d+|go\d+|wo\d+)$/;                      // needs only the score (half-time score for p/d/f/s)
+const NEED_HT = /^(p1|p2|d1|d2|f\d+|s\d+)$/, NEED_CN = /^(c\d+|ch\d+|ca\d+)$/;
+const FIRST_HALF_SHARE = 45 / 89;                                                // virtual goals fall on a random minute 1-89, so 45 of 89 are in the 1st half
+const REAL_FIRST_HALF = 0.45;                                                    // real matches: about 45% of the goals come in the 1st half
+const LIVE_MARGIN = 0.04;                                                        // extra house margin on live prices (covers the delay of the free score feed)
+const GOAL_PAUSE_MS = 45000;                                                     // live betting on a game is paused this long after a goal
+// which selections of market k win?  S = { h1, a1, h2, a2 } goals per half (+ ch / ca = corners).  → [winning option numbers] | null (not known yet / not a market of this kind)
+const R3 = (a, b) => a > b ? 0 : a === b ? 1 : 2, DCW = [[0, 1], [0, 2], [1, 2]];          // result 1/X/2 → winning double-chance options (1X, 12, X2)
+const WIN = {};
+function winner(k) {
+  if (WIN[k]) return WIN[k];
+  const L = lineOf(k), pre = String(k).replace(/\d+$/, ''), ou = (n) => n > L ? 0 : 1, T = (S) => S.h1 + S.h2 + S.a1 + S.a2, FH = (S) => R3(S.h1 + S.h2, S.a1 + S.a2);
+  let f = () => null;
+  if (k === 'x') f = (S) => [FH(S)];
+  else if (k === 'dc') f = (S) => DCW[FH(S)];
+  else if (k === 'gg') f = (S) => [(S.h1 + S.h2 > 0 && S.a1 + S.a2 > 0) ? 0 : 1];
+  else if (k === 'p1') f = (S) => [R3(S.h1, S.a1)];
+  else if (k === 'p2') f = (S) => [R3(S.h2, S.a2)];
+  else if (k === 'd1') f = (S) => DCW[R3(S.h1, S.a1)];
+  else if (k === 'd2') f = (S) => DCW[R3(S.h2, S.a2)];
+  else if (pre === 'o') f = (S) => [ou(T(S))];
+  else if (pre === 'h') f = (S) => [ou(S.h1 + S.h2)];
+  else if (pre === 'a') f = (S) => [ou(S.a1 + S.a2)];
+  else if (pre === 'f') f = (S) => [ou(S.h1 + S.a1)];
+  else if (pre === 's') f = (S) => [ou(S.h2 + S.a2)];
+  else if (pre === 'c' || pre === 'ch' || pre === 'ca') f = (S) => !Number.isFinite(S.ch) || !Number.isFinite(S.ca) ? null : [ou(pre === 'c' ? S.ch + S.ca : pre === 'ch' ? S.ch : S.ca)];
+  else if (pre === 'xo') f = (S) => [ou(T(S)) * 3 + FH(S)];
+  else if (pre === 'wo') f = (S) => { const r = FH(S), o = ou(T(S)), w = []; for (let i = 0; i < 3; i++) { if (r === i || o === 0) w.push(i); if (r === i || o === 1) w.push(i + 3); } return w; };   // [1|O, X|O, 2|O, 1|U, X|U, 2|U]
+  else if (pre === 'do') f = (S) => DCW[FH(S)].map(d => d * 2 + ou(T(S)));
+  else if (pre === 'go') f = (S) => [((S.h1 + S.h2 > 0 && S.a1 + S.a2 > 0) ? 0 : 2) + ou(T(S))];
+  return (WIN[k] = f);
+}
+const selWins = (k, i, S) => { const w = winner(k)(S); return w ? w.includes(i) : null; };
 
 // 40 teams per league → 20 matches per league every round.  "Name|CODE|strength"
 const T = (txt) => txt.trim().split(/\s*;\s*/).map(x => x.split('|'));
@@ -69,7 +111,8 @@ const DEFAULTS = { enabled: true, virtual: true, real: true, live: true, mode: '
 const rnd = () => crypto.randomInt(0, 1e9) / 1e9;
 const poisson = (l) => { const L = Math.exp(-l); let k = 0, p = 1; do { k++; p *= rnd(); } while (p > L); return k - 1; };
 const pmf = (l, k) => { let f = 1; for (let i = 2; i <= k; i++) f *= i; return Math.exp(-l) * Math.pow(l, k) / f; };
-const pub = (t) => ({ n: t.n, c: t.c, col: t.col, st: t.st });
+let logoLookup = () => '';
+const pub = (t) => ({ n: t.n, c: t.c, col: t.col, st: t.st, l: logoLookup(t.n) });
 
 function cleanSettings(s) {
   s = s || {};
@@ -169,8 +212,53 @@ module.exports = function createFootball(opts) {
     const p1 = r1 / (r1 + r2), v = p1 * evl(r1 - 1, r2, d + 1, k) + (r2 ? (1 - p1) * evl(r1, r2 - 1, d - 1, k) : 0);
     evMemo.set(key, v); return v;
   }
-  function fixture(h, a, id, edge, lg) {
-    const lh = 1.35 * Math.pow(h.s / a.s, .6) * 1.08, la = 1.15 * Math.pow(a.s / h.s, .6);
+  // ── the maths behind every price ──
+  const mkOdd = (edge) => (p, mx = 50) => { const r = (1 - edge) / Math.max(p, 1e-9); return r < 1.05 ? null : Math.min(mx, Math.round(r * 100) / 100); };
+  const lamOf = (hs, as) => ({ lh: 1.35 * Math.pow(hs / as, .6) * 1.08, la: 1.15 * Math.pow(as / hs, .6) });                     // expected goals (home, away)
+  const lamCorners = (hs, as) => ({ lch: 5.3 * Math.pow(hs / as, .3), lca: 4.5 * Math.pow(as / hs, .3) });                      // expected corners (home, away) ≈ 9.8 a game
+  const binom = (n, k, q) => { let c = 1; for (let i = 1; i <= k; i++) c = c * (n - k + i) / i; return c * Math.pow(q, k) * Math.pow(1 - q, n - k); };
+  const poisArr = (l, n) => { const a = []; let t = 0; for (let k = 0; k < n; k++) { const p = pmf(l, k); a.push(p); t += p; } a.push(Math.max(0, 1 - t)); return a; };
+  // every way a game can end: [{ p, h1, h2, a1, a2 }] = goals of each team in each half.  Virtual: the goals are capped at CAP per team and each goal lands in the 1st half with chance q (random minute).
+  function jointCapped(ph, pa, q) {
+    const J = [];
+    for (let gh = 0; gh <= CAP; gh++) for (let ga = 0; ga <= CAP; ga++) {
+      const p = ph[gh] * pa[ga]; if (p < 1e-12) continue;
+      for (let i = 0; i <= gh; i++) { const bi = p * binom(gh, i, q); for (let j = 0; j <= ga; j++) J.push({ p: bi * binom(ga, j, q), h1: i, h2: gh - i, a1: j, a2: ga - j }); }
+    }
+    return J;
+  }
+  // live: goals still to come in each half (independent Poisson)
+  function jointLive(r1h, r2h, r1a, r2a) {
+    const N = 5, A = poisArr(r1h, N), B = poisArr(r2h, N), C = poisArr(r1a, N), D = poisArr(r2a, N), J = [];
+    for (let a = 0; a <= N; a++) for (let b = 0; b <= N; b++) for (let c = 0; c <= N; c++) for (let d = 0; d <= N; d++) { const p = A[a] * B[b] * C[c] * D[d]; if (p > 1e-9) J.push({ p, h1: a, h2: b, a1: c, a2: d }); }
+    return J;
+  }
+  // prices for `keys` from the list of endings J, on top of the goals already scored (base)
+  function bookFromJ(J, base, edge, keys) {
+    const odd = mkOdd(edge), acc = {}, out = {};
+    keys.forEach(k => { acc[k] = new Array(OPTS[k]).fill(0); });
+    const fns = keys.map(k => winner(k)), S = {};
+    for (const e of J) {
+      S.h1 = base.h1 + e.h1; S.a1 = base.a1 + e.a1; S.h2 = base.h2 + e.h2; S.a2 = base.a2 + e.a2;
+      for (let n = 0; n < keys.length; n++) { const w = fns[n](S); if (w) { const row = acc[keys[n]]; for (const i of w) row[i] += e.p; } }
+    }
+    keys.forEach(k => { out[k] = acc[k].map(p => odd(p)); });
+    return out;
+  }
+  // corners: independent Poisson per team (the rest of the game when live), on top of the corners already taken
+  function cornerBook(lch, lca, have, edge, lines) {
+    const odd = mkOdd(edge), A = poisArr(lch, 30), B = poisArr(lca, 30), out = {}, h0 = have ? have.h : 0, a0 = have ? have.a : 0;
+    const tot = new Array(61).fill(0); A.forEach((x, i) => B.forEach((y, j) => { tot[i + j] += x * y; }));
+    const over = (arr, off, L) => { let p = 0; arr.forEach((x, n) => { if (n + off > L) p += x; }); return p; };
+    for (const L of LINES.c) { if (h0 + a0 > L) continue; const p = over(tot, h0 + a0, L); out['c' + Math.round(L * 10)] = [odd(p), odd(1 - p)]; }
+    for (const L of LINES.ch) { if (h0 > L) continue; const p = over(A, h0, L); out['ch' + Math.round(L * 10)] = [odd(p), odd(1 - p)]; }
+    for (const L of LINES.ca) { if (a0 > L) continue; const p = over(B, a0, L); out['ca' + Math.round(L * 10)] = [odd(p), odd(1 - p)]; }
+    return out;
+  }
+  const NEW_KEYS = Object.keys(OPTS).filter(k => HALFK.test(k));                                  // p1 p2 d1 d2 fNN sNN xoNN doNN goNN
+  function fixture(h, a, id, edge, lg, opt) {
+    opt = opt || {};
+    const { lh, la } = lamOf(h.s, a.s), { lch, lca } = lamCorners(h.s, a.s);
     const ph = capPmf(lh), pa = capPmf(la), px = [0, 0, 0], tg = new Array(2 * CAP + 1).fill(0), u = { 1: [0, 0], 2: [0, 0] };
     for (let i = 0; i <= CAP; i++) for (let j = 0; j <= CAP; j++) {
       const p = ph[i] * pa[j]; px[i > j ? 0 : i === j ? 1 : 2] += p; tg[i + j] += p;
@@ -188,12 +276,21 @@ module.exports = function createFootball(opts) {
     for (let i = 0; i < gh; i++) goals.push({ m: 1 + crypto.randomInt(0, 89), side: 0 });
     for (let i = 0; i < ga; i++) goals.push({ m: 1 + crypto.randomInt(0, 89), side: 1 });
     goals.sort((x, y) => x.m - y.m);
-    return { id, lg, h, a, o, goals, gh, ga, res: gh > ga ? 0 : gh === ga ? 1 : 2 };
+    // 1st half / 2nd half 1X2 + double chance, half goals Over/Under, 1X2 & Over/Under, double chance & Over/Under, GG & Over/Under (exact, from every possible ending)
+    Object.assign(o, bookFromJ(jointCapped(ph, pa, opt.q || FIRST_HALF_SHARE), { h1: 0, a1: 0, h2: 0, a2: 0 }, edge, NEW_KEYS));
+    let cn = null;
+    if (opt.corners) Object.assign(o, cornerBook(lch, lca, null, edge));                         // corners Over/Under: REAL matches only (the virtual TV has no corners)
+    return { id, lg, h, a, o, goals, gh, ga, cn, res: gh > ga ? 0 : gh === ga ? 1 : 2 };
   }
   // did this selection win? (1UP / 2UP: a team that was EVER 1 / 2 goals ahead is paid as a winner, even if it did not win)
   const everLead = (f, side, k) => { let d = 0; for (const g of f.goals) { d += g.side === side ? 1 : -1; if (d >= k) return true; } return false; };
   function wins(f, k, i) {
     const t = f.gh + f.ga;
+    if (NEWK.test(k)) {                                                                // half / combo / corner markets
+      const S = { h1: 0, a1: 0, h2: 0, a2: 0, ch: f.cn ? f.cn.h : NaN, ca: f.cn ? f.cn.a : NaN };
+      for (const g of f.goals) { const x = g.side ? (g.m <= 45 ? 'a1' : 'a2') : (g.m <= 45 ? 'h1' : 'h2'); S[x]++; }
+      return !!selWins(k, i, S);
+    }
     if (k === 'x') return f.res === i;
     if (k === 'gg') return (f.gh > 0 && f.ga > 0) === (i === 0);
     if (k === 'cs') return i < CS.length ? (f.gh === CS[i][0] && f.ga === CS[i][1]) : !CS.some(([x, y]) => x === f.gh && y === f.ga);
@@ -334,7 +431,7 @@ module.exports = function createFootball(opts) {
   const AUTO_MAX = Math.max(1, Number(process.env.REAL_AUTO_MAX) || 25);                         // leagues fetched (every league in season, big ones first)
   const LIVE_MS = Math.max(60, Number(process.env.REAL_LIVE_SEC) || 90) * 1000;                  // live-score check while games are in play (1-2 credits per league with a game on)
   const EMPTY_SKIP_MS = 6 * 3600000;                                                              // a league with no games in the next DAYS is not asked again for 6h (saves credits)
-  const DAYS = Math.min(14, Math.max(1, Number(process.env.REAL_DAYS) || 7));                  // today + the next DAYS-1 days
+  const DAYS = Math.min(14, Math.max(1, Number(process.env.REAL_DAYS) || 8));                  // today + the next DAYS-1 days (8 = today and the next 7 days)
   const FIRST = ['soccer_epl', 'soccer_uefa_champs_league', 'soccer_spain_la_liga', 'soccer_italy_serie_a', 'soccer_germany_bundesliga', 'soccer_france_ligue_one',
     'soccer_uefa_europa_league', 'soccer_efl_champ', 'soccer_netherlands_eredivisie', 'soccer_portugal_primeira_liga', 'soccer_fifa_world_cup_qualifier', 'soccer_uefa_nations_league', 'soccer_international_friendlies', 'soccer_africa_cup_of_nations'];
   const TITLES = {};
@@ -452,11 +549,25 @@ module.exports = function createFootball(opts) {
       }
     } finally { exBusy = false; }
   }
-  const ouLine = (k) => Number(k.slice(1)) / 10;
+  const ouLine = lineOf;
   const res3 = (ev) => ev.gh > ev.ga ? 0 : ev.gh === ev.ga ? 1 : 2;
+  // the final score split into halves (half-time score captured from the live feed / ESPN) + the final corner count
+  function splitOf(ev) {
+    const S = { h1: 0, a1: 0, h2: ev.gh, a2: ev.ga, ht: false };
+    if (ev.ht && Number.isInteger(ev.ht.gh) && Number.isInteger(ev.ht.ga) && ev.ht.gh >= 0 && ev.ht.ga >= 0 && ev.ht.gh <= ev.gh && ev.ht.ga <= ev.ga) { S.h1 = ev.ht.gh; S.a1 = ev.ht.ga; S.h2 = ev.gh - S.h1; S.a2 = ev.ga - S.a1; S.ht = true; }
+    if (ev.cn && ev.cn.fin) { S.ch = ev.cn.h; S.ca = ev.cn.a; }
+    return S;
+  }
+  const staleData = (ev) => Date.now() - (ev.doneAt || ev.t + 2 * 3600000) > 6 * 3600000;       // data we still could not find 6 hours after full time → the leg is void (stake back)
   // → 'won' | 'lost' | 'void' (draw no bet on a draw = stake back on that leg), from the real final score
   function realLeg(ev, k, i) {
     const r = res3(ev);
+    if (NEWK.test(k)) {                                                       // half / combo / corner markets
+      const S = splitOf(ev);
+      if (NEED_HT.test(k) && !S.ht) return 'void';                            // half-time score never seen: stake back on that leg
+      if (NEED_CN.test(k) && !Number.isFinite(S.ch)) return staleData(ev) ? 'void' : 'pend';   // waiting for the final corner count
+      const w = selWins(k, i, S); return w === null ? 'void' : w ? 'won' : 'lost';
+    }
     if (k === 'x') return r === i ? 'won' : 'lost';
     if (k === 'dc') return (i === 0 ? r !== 2 : i === 1 ? r !== 1 : r !== 0) ? 'won' : 'lost';
     if (k === 'dnb') return r === 1 ? 'void' : (r === i ? 'won' : 'lost');
@@ -472,6 +583,7 @@ module.exports = function createFootball(opts) {
       if (ev.status !== 'done') { pending = true; continue; }
       const r = realLeg(ev, p.k, p.i);
       if (r === 'lost') return { st: 'lost', win: 0 };                        // one wrong leg loses the slip straight away
+      if (r === 'pend') { pending = true; continue; }                         // e.g. waiting for the final corner count
       if (r === 'void') continue;
       prod *= p.odd; won++;
     }
@@ -503,6 +615,7 @@ module.exports = function createFootball(opts) {
     const now = Date.now(), o = ev.live;
     if ((!o && gh + ga > 0) || (o && (o.gh !== gh || o.ga !== ga))) ev.scAt = now;          // a goal: bets stay paused until prices from AFTER it arrive
     ev.live = { gh, ga, at: now, min: Number.isFinite(min) ? min : null, st: st || null, src };
+    if (st === 'HT') ev.ht = { gh, ga };                                                       // half-time score: settles the 1st / 2nd half markets
     touch();
   }
   // → null (not started) or { ph: '1H' | 'HT' | '2H' | 'ET' | 'FT', min, plus, left, est }   est = worked out from kick-off, not from a data feed
@@ -529,16 +642,46 @@ module.exports = function createFootball(opts) {
     if (!ev || ev.status !== 'open') return { ok: false, why: 'closed' };
     if (now <= ev.t - CLOSE_MS) return { ok: true };
     if (now < ev.t) return { ok: false, why: 'closed' };                                      // the last minute before kick-off
-    if (ev.free) return { ok: false, why: 'closed' };                                         // calculated odds never move, so no betting once the game has started
     if (!store.settings.live) return { ok: false, why: 'live_off' };
     const l = ev.live, c = clockOf(ev, now);
     if (c && (c.ph === 'FT' || c.ph === 'ET' || (c.ph === '2H' && c.min >= 85))) return { ok: false, why: 'closed' };
+    if (ev.free) {                                                                            // LIVE betting on the calculated prices (real matches only): needs a fresh score from the feed
+      if (!l || !c || now - l.at > FREE_FRESH_MS) return { ok: false, why: 'live_wait' };
+      if (now - (ev.scAt || 0) < GOAL_PAUSE_MS) return { ok: false, why: 'live_goal' };      // a goal just went in: paused until the prices are re-made
+      return { ok: true };
+    }
     if (!l || now - l.at > LIVE_FRESH_MS || !ev.oddsAt || now - ev.oddsAt > LIVE_FRESH_MS || ev.oddsAt < (ev.scAt || 0)) return { ok: false, why: 'live_wait' };
     return { ok: true };
   }
   const isStarted = (ev, now) => (now || Date.now()) >= ev.t;
   // the prices players see: the real prices, moved by the difficulty (easy / normal / hard). On a live game, lines that are already decided are removed.
+  // ── LIVE prices (real matches): worked out again from the score, the minute (and corners) every time something changes.
+  const lbCache = new Map();
+  function liveBook(ev) {
+    const now = Date.now(), l = ev.live, c = clockOf(ev, now);
+    if (!l || !c || !['1H', 'HT', '2H'].includes(c.ph)) return {};
+    const cnOk = !!ev.cn && !ev.cn.fin && now - ev.cn.at < 150000;
+    const key = [ev.id, l.gh, l.ga, c.ph, c.min, ev.ht ? ev.ht.gh + '/' + ev.ht.ga : '-', cnOk ? ev.cn.h + '/' + ev.cn.a : '-', store.settings.mode].join('|');
+    const hitC = lbCache.get(ev.id); if (hitC && hitC.key === key) return hitC.o;
+    const hs = ev.sh || strengthOf(ev.h), as = ev.sa || strengthOf(ev.a), { lh, la } = lamOf(hs, as), { lch, lca } = lamCorners(hs, as);
+    const edge = 1 - (1 - R_EDGE[store.settings.mode]) * (1 - LIVE_MARGIN), p1 = REAL_FIRST_HALF;
+    const el = c.ph === 'HT' ? 45 : Math.max(0, c.min - .5);
+    const f1 = c.ph === '1H' ? Math.max(.02, (45 - el) / 45) : 0, f2 = c.ph === '2H' ? Math.min(1, Math.max(.02, (90 - el) / 45)) : 1;
+    let base, halves = true;
+    if (c.ph === '1H') base = { h1: l.gh, a1: l.ga, h2: 0, a2: 0 };
+    else if (ev.ht && ev.ht.gh <= l.gh && ev.ht.ga <= l.ga) base = { h1: ev.ht.gh, a1: ev.ht.ga, h2: l.gh - ev.ht.gh, a2: l.ga - ev.ht.ga };
+    else { base = { h1: 0, a1: 0, h2: l.gh, a2: l.ga }; halves = false; }                      // half-time score unknown: only full-time markets
+    const keys = NEW_KEYS.concat(['x', 'dc', 'gg'], Object.keys(OPTS).filter(k => /^[oha]\d+$/.test(k)))
+      .filter(k => halves || !NEED_HT.test(k)).filter(k => c.ph === '1H' || !/^(p1|d1|f\d+)$/.test(k));   // after half-time the 1st half is over
+    const J = jointLive(lh * p1 * f1, lh * (1 - p1) * f2, la * p1 * f1, la * (1 - p1) * f2), out = bookFromJ(J, base, edge, keys);
+    const cur = (k) => { const p = k.replace(/\d+$/, ''); return p === 'o' ? l.gh + l.ga : p === 'h' ? l.gh : p === 'a' ? l.ga : p === 'f' ? base.h1 + base.a1 : p === 's' ? base.h2 + base.a2 : 0; };
+    for (const k of Object.keys(out)) if (/^[ohafs]\d+$/.test(k) && cur(k) > lineOf(k)) delete out[k];       // an Over line that is already won is taken off
+    if (cnOk) { const rem = Math.max(.02, (90 - el) / 90); Object.assign(out, cornerBook(lch * rem, lca * rem, ev.cn, edge)); }
+    lbCache.set(ev.id, { key, o: out }); if (lbCache.size > 300) lbCache.delete(lbCache.keys().next().value);
+    return out;
+  }
   function oddsFor(ev) {
+    if (ev.free && isStarted(ev)) return liveBook(ev);
     const f = (1 - R_EDGE[store.settings.mode]) / (1 - REAL_EDGE), live = isStarted(ev), l = live && ev.live ? ev.live : { gh: 0, ga: 0 }, out = {};
     for (const [k, arr] of Object.entries(ev.o || {})) {
       if (live && /^[oha]\d+$/.test(k)) { const g = k[0] === 'o' ? l.gh + l.ga : k[0] === 'h' ? l.gh : l.ga; if (g > ouLine(k)) continue; }
@@ -738,19 +881,20 @@ module.exports = function createFootball(opts) {
   // ═══════ FREE feed (default): every match, live score and final result from ESPN's public scoreboard. No key, no credit limit. ═══════
   // No free feed carries bookmaker prices, so the SERVER works the odds out from team strength with the same model as the TV matches
   // (known clubs use their rating, others use their league record). Odds are made once per match and then stay fixed. Betting closes at kick-off.
-  // FREE_LEAGUES=eng.1,esp.1,... picks leagues · FREE_REFRESH_MIN (30) how often the fixture list is refreshed · FREE_LIVE_SEC (60) live score check
+  // FREE_LEAGUES=eng.1,esp.1,... picks leagues · FREE_REFRESH_MIN (30) how often the fixture list is refreshed · FREE_LIVE_SEC (20) live score check
+  // LIVE BETTING works on these calculated prices too: the price is re-made from the live score + minute (see liveBook), paused for 45s after every goal.
   const ESPN = 'https://site.api.espn.com/apis/site/v2/sports/soccer/';
-  const ESPN_LG = { 'eng.1': 'Premier League', 'uefa.champions': 'Champions League', 'esp.1': 'La Liga', 'ita.1': 'Serie A', 'ger.1': 'Bundesliga', 'fra.1': 'Ligue 1',
-    'uefa.europa': 'Europa League', 'uefa.europa.conf': 'Conference League', 'eng.2': 'Championship', 'eng.3': 'League One', 'eng.fa': 'FA Cup', 'eng.league_cup': 'League Cup',
-    'ned.1': 'Eredivisie', 'por.1': 'Primeira Liga', 'sco.1': 'Scottish Premiership', 'bel.1': 'Belgian Pro League', 'tur.1': 'Super Lig', 'gre.1': 'Greek Super League',
-    'esp.2': 'La Liga 2', 'ita.2': 'Serie B', 'ger.2': '2. Bundesliga', 'fra.2': 'Ligue 2', 'esp.copa_del_rey': 'Copa del Rey', 'ita.coppa_italia': 'Coppa Italia', 'ger.dfb_pokal': 'DFB Pokal',
+  const ESPN_LG = { 'eng.1': 'England - Premier League', 'uefa.champions': 'International Clubs - UEFA Champions League', 'esp.1': 'Spain - LaLiga', 'ita.1': 'Italy - Serie A', 'ger.1': 'Germany - Bundesliga', 'fra.1': 'France - Ligue 1',
+    'uefa.europa': 'International Clubs - UEFA Europa League', 'uefa.europa.conf': 'International Clubs - UEFA Conference League', 'eng.2': 'England - Championship', 'eng.3': 'England - League One', 'eng.fa': 'England - FA Cup', 'eng.league_cup': 'England - EFL Cup',
+    'ned.1': 'Netherlands - Eredivisie', 'por.1': 'Portugal - Primeira Liga', 'sco.1': 'Scotland - Premiership', 'bel.1': 'Belgium - Pro League', 'tur.1': 'Turkey - Super Lig', 'gre.1': 'Greece - Super League',
+    'esp.2': 'Spain - LaLiga 2', 'ita.2': 'Italy - Serie B', 'ger.2': 'Germany - 2. Bundesliga', 'fra.2': 'France - Ligue 2', 'esp.copa_del_rey': 'Spain - Copa del Rey', 'ita.coppa_italia': 'Italy - Coppa Italia', 'ger.dfb_pokal': 'Germany - DFB Pokal',
     'uefa.nations': 'UEFA Nations League', 'fifa.friendly': 'International Friendly', 'fifa.world': 'World Cup', 'fifa.worldq.uefa': 'World Cup Qualifiers (Europe)',
     'fifa.worldq.caf': 'World Cup Qualifiers (Africa)', 'fifa.worldq.conmebol': 'World Cup Qualifiers (S. America)', 'uefa.euroq': 'Euro Qualifiers', 'caf.nations': 'AFCON',
     'caf.champions': 'CAF Champions League', 'arg.1': 'Primera Division - Argentina', 'bra.1': 'Brasileirao', 'usa.1': 'MLS', 'mex.1': 'Liga MX', 'jpn.1': 'J1 League', 'aus.1': 'A-League',
-    'sau.1': 'Saudi Pro League', 'rsa.1': 'South African Premier Division' };
+    'fra.coupe_de_france': 'France - Coupe de France', 'por.taca.portugal': 'Portugal - Taca de Portugal', 'sau.1': 'Saudi Pro League', 'rsa.1': 'South African Premier Division' };
   Object.assign(LEAGUE_NAME, ESPN_LG);
   const FREE_LEAGUES = String(process.env.FREE_LEAGUES || '').split(',').map(x => x.trim()).filter(x => /^[a-z0-9_.]+$/i.test(x)), FREE_LG = FREE_LEAGUES.length ? FREE_LEAGUES : Object.keys(ESPN_LG);
-  const FREE_REFRESH = Math.max(5, Number(process.env.FREE_REFRESH_MIN) || 30) * 60000, FREE_LIVE_MS = Math.max(30, Number(process.env.FREE_LIVE_SEC) || 60) * 1000;
+  const FREE_REFRESH = Math.max(5, Number(process.env.FREE_REFRESH_MIN) || 30) * 60000, FREE_LIVE_MS = Math.max(15, Number(process.env.FREE_LIVE_SEC) || 20) * 1000, FREE_FRESH_MS = 2 * FREE_LIVE_MS + 15000;     // live score check every 20s; live betting needs a score newer than ~55s
   const ymd = (t) => new Date(t).toISOString().slice(0, 10).replace(/-/g, '');
   async function espnRaw(slug, dates) {                                                    // → { status, events }   dates: 'YYYYMMDD' or 'YYYYMMDD-YYYYMMDD'; none = ESPN's own current / next matchday
     const r = await fetch(ESPN + encodeURIComponent(slug) + '/scoreboard?limit=1000' + (dates ? '&dates=' + dates : ''), { signal: AbortSignal.timeout(20000), headers: { accept: 'application/json' } });
@@ -800,9 +944,23 @@ module.exports = function createFootball(opts) {
     return 1.2;
   }
   function freeOdds(h, a, hc, ac) {
-    const f = fixture({ s: strengthOf(h, hc) }, { s: strengthOf(a, ac) }, 0, REAL_EDGE, 0), o = {};
+    const f = fixture({ s: strengthOf(h, hc) }, { s: strengthOf(a, ac) }, 0, REAL_EDGE, 0, { q: REAL_FIRST_HALF, corners: true }), o = {};
     for (const [k, arr] of Object.entries(f.o)) { if (k === 'cs' || k === 'u1' || k === 'u2') continue; if (arr.some(v => v != null)) o[k] = arr; }   // the markets a real match can settle
     return o;
+  }
+  // the half-time score from ESPN's own data: the per-half line scores, else the goal list (only trusted when it adds up to the score)
+  function halfFrom(c, H, A, gh, ga) {
+    const ls = (x) => (Array.isArray(x && x.linescores) ? x.linescores : []).map(v => num(v && v.value)), a = ls(H), b = ls(A);
+    if (a.length >= 2 && b.length >= 2 && Number.isFinite(a[0]) && Number.isFinite(b[0]) && a[0] <= gh && b[0] <= ga) return { gh: a[0], ga: b[0] };
+    const det = (Array.isArray(c && c.details) ? c.details : []).filter(d => d && d.scoringPlay), hid = String(H.team && H.team.id), aid = String(A.team && A.team.id);
+    if (!det.length) return null;
+    const n = { h1: 0, a1: 0, h: 0, a: 0 };
+    for (const d of det) {
+      const m = /^(\d+)/.exec(String(d.clock && d.clock.displayValue || '').trim()), tid = String(d.team && d.team.id), side = tid === hid ? 'h' : tid === aid ? 'a' : '';
+      if (!m || !side) return null;
+      n[side]++; if (Number(m[1]) <= 45) n[side + '1']++;
+    }
+    return n.h === gh && n.a === ga ? { gh: n.h1, ga: n.a1 } : null;
   }
   const STATE = (nm, period) => /FIRST_HALF/.test(nm) ? '1H' : /HALFTIME|HALF_TIME/.test(nm) ? 'HT' : /SECOND_HALF/.test(nm) ? '2H' : /EXTRA|OVERTIME|SHOOTOUT|PENALT/.test(nm) ? 'ET' : period === 1 ? '1H' : period === 2 ? '2H' : null;
   function applyFree(slug, e) {                                                             // → 1 when a new open match was seen
@@ -818,23 +976,49 @@ module.exports = function createFootball(opts) {
       if (ev) { if (!ev.hid && H.team.id) { ev.hid = String(H.team.id); ev.aid = String(A.team.id); } if (ev.status === 'open' && ev.t > Date.now() && ev.t !== t) { ev.t = t; touch(); } return 0; }          // moved to another time: keep the same match
       if (t <= Date.now()) return 0;
       const o = freeOdds(hn, an, H, A); if (!o.x) return 0;
-      ev = real.events[id] = { id, lg: slug, lgName: ESPN_LG[slug] || slug, h: hn, a: an, t, base: o, ex: {}, exAt: 0, status: 'open', gh: null, ga: null, free: true, hid: H.team.id ? String(H.team.id) : '', aid: A.team.id ? String(A.team.id) : '' };
+      ev = real.events[id] = { id, lg: slug, lgName: ESPN_LG[slug] || slug, h: hn, a: an, t, base: o, ex: {}, exAt: 0, status: 'open', gh: null, ga: null, free: true, sh: strengthOf(hn, H), sa: strengthOf(an, A), hid: H.team.id ? String(H.team.id) : '', aid: A.team.id ? String(A.team.id) : '' };
       compose(ev); touch(); return 1;
     }
     if (!ev || ev.status !== 'open') return 0;                                              // a game we never listed (no odds) is ignored
     const gh = parseInt(H.score, 10), ga = parseInt(A.score, 10); if (!Number.isInteger(gh) || !Number.isInteger(ga)) return 0;
     if (state === 'in') {
       const st = STATE(nm, e.status && e.status.period), mn = parseInt(String((e.status && e.status.displayClock) || '').replace(/[^0-9+].*$/, ''), 10);
-      setLive(ev, gh, ga, st === 'HT' ? 45 : mn, st, 'free'); return 0;
+      setLive(ev, gh, ga, st === 'HT' ? 45 : mn, st, 'free');
+      if (!ev.ht && (st === '2H' || st === 'HT')) { const hf = halfFrom(c, H, A, gh, ga); if (hf) { ev.ht = hf; touch(); } }
+      return 0;
     }
     if (state === 'post') {
       if (/AET|PEN|EXTRA|SHOOT/i.test(nm)) { ev.status = 'void'; ev.live = null; touch(); return 0; }          // score includes extra time / shootout: stakes come back
-      ev.gh = gh; ev.ga = ga; ev.status = 'done'; ev.live = null; touch();
+      if (!ev.ht) { const hf = halfFrom(c, H, A, gh, ga); if (hf) ev.ht = hf; }
+      ev.gh = gh; ev.ga = ga; ev.status = 'done'; ev.live = null; ev.doneAt = Date.now(); touch();
     }
     return 0;
   }
+  // ── corners (real matches): the live / final corner count from ESPN's match page. Live prices for corners need a fresh count; settlement needs the FINAL count.
+  async function fetchCorners(ev) {
+    const j = await espnJ(ESPN + encodeURIComponent(ev.lg) + '/summary?event=' + encodeURIComponent(String(ev.id).replace(/^e/, '')));
+    const get = (t) => { const x = ((t && t.statistics) || []).find(z => /^(wonCorners|cornerKicks|corners)$/i.test(String(z && z.name))); return x ? num(x.displayValue !== undefined ? x.displayValue : x.value) : NaN; };
+    let h = NaN, a = NaN;
+    for (const t of (j.boxscore && j.boxscore.teams) || []) { const id = String(t.team && t.team.id), v = get(t); if (id === String(ev.hid) || t.homeAway === 'home') h = v; else if (id === String(ev.aid) || t.homeAway === 'away') a = v; }
+    return Number.isFinite(h) && Number.isFinite(a) ? { h, a } : null;
+  }
+  let cnBusy = false;
+  async function pollCorners() {
+    if (!FREE || cnBusy) return; cnBusy = true;
+    try {
+      const now = Date.now(), need = new Set(real.bets.filter(b => b.status === 'open').flatMap(b => b.picks.filter(p => NEED_CN.test(p.k)).map(p => p.e)));
+      const list = Object.values(real.events).filter(ev => ev.free && ev.hid && (
+        (ev.status === 'open' && now >= ev.t && now < ev.t + 150 * 60000 && now - ((ev.cn && ev.cn.at) || 0) > 45000) ||           // live games: every 45s
+        (ev.status === 'done' && need.has(ev.id) && !(ev.cn && ev.cn.fin) && now - ((ev.cn && ev.cn.at) || 0) > 60000)));          // finished games with a corner bet: until the final count is in
+      for (let i = 0; i < list.length; i += 4) await Promise.all(list.slice(i, i + 4).map(async (ev) => {
+        try { const c = await fetchCorners(ev); if (c) { ev.cn = { h: c.h, a: c.a, at: Date.now(), fin: ev.status === 'done' }; touch(); } else if (ev.status === 'done') ev.cn = Object.assign(ev.cn || {}, { at: Date.now() }); } catch (x) { if (ev.status === 'done') ev.cn = Object.assign(ev.cn || {}, { at: Date.now() }); }
+      }));
+      if (list.length) settleBets();
+    } finally { cnBusy = false; }
+  }
   let freeBusy = false;
-  async function pollFree(full) {                                                           // full = fixtures for every league · else only leagues with a game being played / just finished
+  async function pollFree(full) {
+    pollCorners().catch(() => {});                                                           // full = fixtures for every league · else only leagues with a game being played / just finished
     if (!FREE || freeBusy) return; freeBusy = true;
     try {
       const now = Date.now(), diag = {}; let errs = [], fresh = 0;
@@ -902,6 +1086,7 @@ module.exports = function createFootball(opts) {
       if (!ev || ev.status !== 'open' || seen.has(ev.id)) return { status: 400, error: 'bad_picks' };
       const cb = canBet(ev); if (!cb.ok) return { status: 400, error: cb.why };                     // started games: only when live betting is on and the prices are fresh
       if (!od[k] || !Number.isInteger(i) || i < 0 || i >= od[k].length || od[k][i] == null) return { status: 400, error: 'bad_picks' };
+      if (isStarted(ev) && !(Math.abs(Number(p.odd) - od[k][i]) <= 0.004)) return { status: 409, error: 'odds_changed' };   // LIVE: the price moved since the player looked, so they must confirm the new one
       seen.add(ev.id); picks.push({ e: ev.id, k, i, odd: od[k][i], h: ev.h, a: ev.a, t: ev.t });   // the SERVER's odds, frozen now
     }
     if (!picks.length || picks.length > MAX_PICKS) return { status: 400, error: 'bad_picks' };
@@ -939,6 +1124,7 @@ module.exports = function createFootball(opts) {
       if (!ev || ev.status !== 'open') return { status: 400, error: 'bad_picks' };
       const cb = canBet(ev); if (!cb.ok) return { status: 400, error: cb.why };
       const od = oddsFor(ev); if (!od[k] || !Number.isInteger(i) || i < 0 || i >= od[k].length || od[k][i] == null) return { status: 400, error: 'bad_picks' };
+      if (isStarted(ev) && !(Math.abs(Number(p.odd) - od[k][i]) <= 0.004)) return { status: 409, error: 'odds_changed' };
       seen.add(id); picks.push({ e: ev.id, k, i, odd: od[k][i], h: ev.h, a: ev.a, t: ev.t });
     }
     for (const [id, o] of orig) if (!seen.has(id) && realLocked(real.events[id], o.t)) return { status: 400, error: 'locked_leg' };   // a started game cannot be dropped
@@ -989,15 +1175,18 @@ module.exports = function createFootball(opts) {
       return { e: p.e, k: p.k, i: p.i, h: p.h, a: p.a, t: p.t, lg: p.lg, st, odd, score };
     }) };
   }
+  // real club logo: the one ESPN sent for this club, else ESPN's picture for its team id, else whatever the logo lookup found
+  const espnLogo = (id) => id ? 'https://a.espncdn.com/i/teamlogos/soccer/500/' + encodeURIComponent(id) + '.png' : '';
+  const logoFor = (name, id) => store.logos[name] || espnLogo(id);
   function realView(acc) {
     const now = Date.now(), w = acc ? walletOf(acc) : null, s = store.settings;
     const day0 = new Date(now); day0.setHours(0, 0, 0, 0);                    // server midnight: today's finished games stay on the list
     const evs = Object.values(real.events).filter(ev => (ev.status === 'open' && ev.t > now - 4 * 3600000) || (ev.status === 'done' && ev.t > Math.min(now - 6 * 3600000, day0.getTime()))).sort((a, b) => a.t - b.t)
-      .map(ev => ({ id: ev.id, lg: ev.lgName, h: ev.h, a: ev.a, t: ev.t, o: oddsFor(ev), closed: !canBet(ev, now).ok, why: canBet(ev, now).why || '',
+      .map(ev => ({ id: ev.id, lg: ESPN_LG[ev.lg] || ev.lgName, h: ev.h, a: ev.a, hl: logoFor(ev.h, ev.hid), al: logoFor(ev.a, ev.aid), t: ev.t, o: oddsFor(ev), closed: !canBet(ev, now).ok, why: canBet(ev, now).why || '',
         sc: ev.status === 'done' ? [ev.gh, ev.ga] : ev.live && now >= ev.t ? [ev.live.gh, ev.live.ga] : null, fin: ev.status === 'done', ck: ev.status === 'done' ? { ph: 'FT', min: 90, plus: 0, left: 0, est: false } : clockOf(ev, now) }));
     const mine = acc ? real.bets.filter(b => b.number === acc.number).slice(-30).reverse()
       .map(b => ({ id: b.id, at: b.at, picks: b.picks.map((p, ix) => Object.assign({ e: p.e, k: p.k, i: p.i, odd: p.odd, h: p.h, a: p.a, t: p.t }, b.res ? b.res[ix] : legRes(p))), amount: b.amount, odds: b.odds, status: b.status, win: b.win, code: b.code || null, edits: b.edits || 0 })) : [];
-    return { ok: true, now, on: REAL_ON && s.enabled && s.real, locked: !s.enabled || !s.real, liveOn: s.live && !FREE, mode: s.mode, setup: !REAL_ON, limits: { min: s.minBet, max: s.maxBet }, events: evs, mine, balance: w ? w.have : null, updated: real.lastFetch, error: real.lastError || '', days: DAYS, diag: Object.entries(real.diag || {}).map(([k, v]) => ({ lg: LEAGUE_NAME[k] || TITLES[k] || k, n: v.n, err: v.err })) };
+    return { ok: true, now, on: REAL_ON && s.enabled && s.real, locked: !s.enabled || !s.real, liveOn: s.live, mode: s.mode, setup: !REAL_ON, limits: { min: s.minBet, max: s.maxBet }, events: evs, mine, balance: w ? w.have : null, updated: real.lastFetch, error: real.lastError || '', days: DAYS, diag: Object.entries(real.diag || {}).map(([k, v]) => ({ lg: LEAGUE_NAME[k] || TITLES[k] || k, n: v.n, err: v.err })) };
   }
 
   // ── what the browser sees ───────────────────────────────────
@@ -1063,6 +1252,44 @@ module.exports = function createFootball(opts) {
     finally { logoBusy = false; }
   }
   if (LOGO_ON) setInterval(logoStep, 2600).unref();
+  logoLookup = (n) => store.logos[n] || '';
+  // ── REAL logos for every virtual club in one go: ESPN lists all the clubs of a league (with their logo) in a single call.
+  //    The club names of the virtual TV are matched to ESPN's names (exact name first, then "all the words of our name are in theirs", the shortest one wins).
+  const LOGO_GROUPS = [['eng.1', 'eng.2', 'eng.3'], ['esp.1', 'esp.2'], ['ger.1', 'ger.2'],
+    ['ita.1', 'fra.1', 'por.1', 'ned.1', 'sco.1', 'tur.1', 'bel.1', 'gre.1', 'aut.1', 'sui.1', 'den.1', 'cze.1', 'srb.1', 'ukr.1', 'cro.1', 'uefa.champions', 'uefa.europa']];
+  const ESPN_NAME = { Inter: 'Internazionale', PSG: 'Paris Saint-Germain', Marseille: 'Marseille', Atletico: 'Atletico Madrid', 'Red Star': 'Crvena Zvezda', 'Slavia Prague': 'Slavia Praha', 'Sparta Prague': 'Sparta Praha', 'Man United': 'Manchester United', Basel: 'FC Basel 1893' };
+  const BAD_TEAM = ['women', 'ladies', 'u17', 'u18', 'u19', 'u20', 'u21', 'u23', 'ii', 'reserves', 'academy'];
+  let logoBulkBusy = false;
+  async function logoBulk() {
+    if (!LOGO_ON || logoBulkBusy) return; logoBulkBusy = true;
+    try {
+      for (let gi = 0; gi < LOGO_GROUPS.length; gi++) {
+        const pool = [];
+        for (const slug of LOGO_GROUPS[gi]) {
+          try {
+            const j = await espnJ(ESPN + slug + '/teams'), lg = (((j.sports || [])[0] || {}).leagues || [])[0];
+            for (const x of (lg && lg.teams) || []) {
+              const t = x && x.team; if (!t) continue;
+              const logo = ((t.logos || [])[0] || {}).href || espnLogo(t.id); if (!logo) continue;
+              const names = [t.displayName, t.shortDisplayName, t.name, t.location].filter(Boolean).map(n => toks(n).join(' ')).filter(Boolean);
+              if (names.length) pool.push({ names, logo: String(logo).replace(/^http:/, 'https:'), bad: names.some(n => n.split(' ').some(w => BAD_TEAM.includes(w))) });
+            }
+          } catch (x) { }                                                                    // a league code ESPN does not know is simply skipped
+        }
+        if (!pool.length) continue;
+        for (const t of LG[gi][1]) {
+          const goal = [ESPN_NAME[t.n], ALIAS[t.n], t.n].filter(Boolean).map(n => toks(n).join(' ')).filter(Boolean);
+          let m = pool.find(p => !p.bad && p.names.some(n => goal.includes(n)));
+          if (!m) {
+            const cand = pool.filter(p => !p.bad && p.names.some(n => goal.some(g => g.split(' ').every(w => n.split(' ').includes(w)))));
+            m = cand.sort((a, b) => Math.min(...a.names.map(n => n.length)) - Math.min(...b.names.map(n => n.length)))[0];
+          }
+          if (m && store.logos[t.n] !== m.logo) { store.logos[t.n] = m.logo; delete store.logoMiss[t.n]; touch(); }   // ESPN logos replace any older / wrong ones
+        }
+      }
+    } finally { logoBulkBusy = false; }
+  }
+  if (LOGO_ON) { setTimeout(logoBulk, 6000).unref(); setInterval(logoBulk, 24 * 3600000).unref(); }
 
   // ── admin helpers (optional) ────────────────────────────────
   function setSettings(patch) {
@@ -1145,5 +1372,15 @@ module.exports = function createFootball(opts) {
     return send(res, 200, { ok: true, id: r.id, balance: (walletOf(acc) || {}).have });
   }
 
+  // games that were listed before this version get the new markets (half-time, combos, corners) too
+  for (const ev of Object.values(real.events)) {
+    if (!ev.free || ev.status !== 'open' || !ev.base || ev.base.p1 || ev.t <= Date.now()) continue;
+    try {
+      ev.sh = ev.sh || strengthOf(ev.h); ev.sa = ev.sa || strengthOf(ev.a);
+      const f = fixture({ s: ev.sh }, { s: ev.sa }, 0, REAL_EDGE, 0, { q: REAL_FIRST_HALF, corners: true });
+      for (const [k, v] of Object.entries(f.o)) if ((NEWK.test(k)) && v.some(x => x != null)) ev.base[k] = v;
+      compose(ev);
+    } catch (x) { }
+  }
   return { handle, onAck, setSettings, adminInfo, hold: (number) => Math.max(0, -net(number)) };
 };
